@@ -96,6 +96,7 @@ export default function ClientOnePage() {
   const [data, setData] = useState<ClientData | null>(null);
   const [connected, setConnected] = useState(false);
   const [isFinishing, setIsFinishing] = useState(false);
+  const [cacheVersion, setCacheVersion] = useState(Date.now());
   const [formData, setFormData] = useState({
     districtOfficeName: "",
     orderNumber: "",
@@ -122,8 +123,25 @@ export default function ClientOnePage() {
   const [showDistrictDropdown, setShowDistrictDropdown] = useState(false);
   const [filteredDistricts, setFilteredDistricts] = useState<string[]>(BANGKOK_DISTRICTS);
   const [restarting, setRestarting] = useState(false);
+  const [uploadToGroupModal, setUploadToGroupModal] = useState<{isOpen: boolean; groupName: string}>({isOpen: false, groupName: ""});
+  const [uploadToGroupProgress, setUploadToGroupProgress] = useState<UploadProgress>({
+    isOpen: false,
+    step: "",
+    percent: 0,
+    message: "",
+    isComplete: false,
+    isError: false,
+  });
+  const [completedFolderImages, setCompletedFolderImages] = useState<string[]>([]);
+  const [selectedCompletedFolder, setSelectedCompletedFolder] = useState<string | null>(null);
+  const [selectedCompletedImageIndex, setSelectedCompletedImageIndex] = useState<number | null>(null);
+  const [loadingCompletedImages, setLoadingCompletedImages] = useState(false);
+  const [imageLoading, setImageLoading] = useState(false);
+  const [imageError, setImageError] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const pdfToGroupInputRef = useRef<HTMLInputElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const completedScrollContainerRef = useRef<HTMLDivElement>(null);
   const districtDropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -138,6 +156,7 @@ export default function ClientOnePage() {
       try {
         const json = JSON.parse(event.data);
         setData(json);
+        setCacheVersion(Date.now());
       } catch (error) {
         console.error("Failed to parse SSE data:", error);
       }
@@ -152,6 +171,14 @@ export default function ClientOnePage() {
       eventSource.close();
     };
   }, []);
+
+  useEffect(() => {
+    // Reset image loading state when changing images
+    if (selectedCompletedImageIndex !== null) {
+      setImageLoading(true);
+      setImageError(false);
+    }
+  }, [selectedCompletedImageIndex, selectedCompletedFolder]);
 
   // Check scanner status via proxy
   useEffect(() => {
@@ -459,6 +486,106 @@ export default function ClientOnePage() {
     }
   };
 
+  const handleUploadPDFToGroup = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.name.toLowerCase().endsWith(".pdf")) {
+      alert("กรุณาเลือกไฟล์ PDF เท่านั้น");
+      return;
+    }
+
+    const groupName = uploadToGroupModal.groupName;
+    if (!groupName) return;
+
+    console.log("=== Starting PDF Upload to Group ===");
+    console.log("File name:", file.name);
+    console.log("Group name:", groupName);
+
+    setUploadToGroupProgress({
+      isOpen: true,
+      step: "starting",
+      percent: 0,
+      message: "เริ่มต้น Upload...",
+      isComplete: false,
+      isError: false,
+    });
+
+    try {
+      const formData = new FormData();
+      formData.append("pdf", file);
+      formData.append("groupName", groupName);
+
+      const res = await fetch("/api/client/1/upload-pdf-to-group", {
+        method: "POST",
+        body: formData,
+      });
+
+      const reader = res.body?.getReader();
+      if (!reader) {
+        throw new Error("No reader available");
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            try {
+              const event = JSON.parse(line.slice(6));
+
+              if (event.type === "progress") {
+                setUploadToGroupProgress((prev) => ({
+                  ...prev,
+                  step: event.step || prev.step,
+                  percent: event.percent || prev.percent,
+                  message: event.message || prev.message,
+                  current: event.current,
+                  total: event.total,
+                }));
+              } else if (event.type === "complete") {
+                setUploadToGroupProgress((prev) => ({
+                  ...prev,
+                  percent: 100,
+                  message: event.message || "เสร็จสิ้น!",
+                  isComplete: true,
+                }));
+              } else if (event.type === "error") {
+                setUploadToGroupProgress((prev) => ({
+                  ...prev,
+                  isError: true,
+                  errorMessage: event.error || "เกิดข้อผิดพลาด",
+                }));
+              }
+            } catch (parseError) {
+              console.error("Failed to parse SSE event:", parseError);
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error("Upload to group error:", error);
+      const errorMessage = error instanceof Error ? error.message : "เกิดข้อผิดพลาดในการ upload";
+      setUploadToGroupProgress((prev) => ({
+        ...prev,
+        isError: true,
+        errorMessage: errorMessage,
+      }));
+    } finally {
+      if (pdfToGroupInputRef.current) {
+        pdfToGroupInputRef.current.value = "";
+      }
+    }
+  };
+
   const closeProgressModal = () => {
     setUploadProgress({
       isOpen: false,
@@ -470,6 +597,58 @@ export default function ClientOnePage() {
     });
   };
 
+  const closeUploadToGroupModal = () => {
+    setUploadToGroupModal({isOpen: false, groupName: ""});
+    setUploadToGroupProgress({
+      isOpen: false,
+      step: "",
+      percent: 0,
+      message: "",
+      isComplete: false,
+      isError: false,
+    });
+  };
+
+  const handleViewCompletedFolder = async (folderName: string) => {
+    setLoadingCompletedImages(true);
+    setSelectedCompletedFolder(folderName);
+    try {
+      // โหลดรายการไฟล์จาก API
+      const response = await fetch(`/api/client/1/completed/${encodeURIComponent(folderName)}`);
+
+      if (!response.ok) {
+        throw new Error('Failed to load images');
+      }
+
+      const data = await response.json();
+      setCompletedFolderImages(data.files);
+      setSelectedCompletedImageIndex(0);
+    } catch (error) {
+      console.error('Error loading completed folder images:', error);
+      alert('ไม่สามารถโหลดรูปภาพได้');
+    } finally {
+      setLoadingCompletedImages(false);
+    }
+  };
+
+  const handlePreviousCompletedImage = () => {
+    if (selectedCompletedImageIndex === null || !completedFolderImages.length) return;
+    const newIndex = selectedCompletedImageIndex === 0 ? completedFolderImages.length - 1 : selectedCompletedImageIndex - 1;
+    setSelectedCompletedImageIndex(newIndex);
+  };
+
+  const handleNextCompletedImage = () => {
+    if (selectedCompletedImageIndex === null || !completedFolderImages.length) return;
+    const newIndex = selectedCompletedImageIndex === completedFolderImages.length - 1 ? 0 : selectedCompletedImageIndex + 1;
+    setSelectedCompletedImageIndex(newIndex);
+  };
+
+  const closeCompletedImageModal = () => {
+    setSelectedCompletedFolder(null);
+    setSelectedCompletedImageIndex(null);
+    setCompletedFolderImages([]);
+  };
+
   const handleRestartService = async () => {
     if (!confirm("ต้องการ Restart Scanner Service หรือไม่?")) {
       return;
@@ -477,7 +656,8 @@ export default function ClientOnePage() {
 
     setRestarting(true);
     try {
-      const res = await fetch("http://localhost:9009/clients/client01/restart", {
+      const hostname = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
+      const res = await fetch(`http://${hostname}:9009/clients/client01/restart`, {
         method: "POST",
       });
 
@@ -755,34 +935,39 @@ export default function ClientOnePage() {
                   className="flex gap-3 overflow-x-auto pb-4 px-1 snap-x snap-mandatory scrollbar-hide"
                   style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
                 >
-                  {data.pending.slice(0, showAllImages ? undefined : 6).map((file, index) => (
-                    <div
-                      key={file.name}
-                      className="flex-shrink-0 snap-start"
-                      onClick={() => setSelectedImageIndex(index)}
-                    >
-                      <div className="w-28 bg-white rounded-xl shadow-md overflow-hidden border border-gray-100 transition-all duration-200 active:scale-95 hover:shadow-lg cursor-pointer">
-                        {/* Document Preview */}
-                        <div className="aspect-[3/4] bg-gradient-to-b from-gray-50 to-gray-100 relative overflow-hidden">
-                          <img
-                            src={`/uploads/1/pending/${file.name}?t=${file.createdAt}`}
-                            alt={file.name}
-                            className="w-full h-full object-cover"
-                          />
-                          {/* Page Number Badge */}
-                          <div className="absolute top-2 right-2 bg-black/60 backdrop-blur-sm text-white text-[10px] font-medium px-2 py-0.5 rounded-full">
-                            {index + 1}
+                  {data.pending.slice(0, showAllImages ? undefined : 6).map((file, index) => {
+                    const displayNumber = index + 1;
+                    const originalIndex = index;
+                    return (
+                      <div
+                        key={`${file.name}-${file.createdAt}`}
+                        className="flex-shrink-0 snap-start"
+                        onClick={() => setSelectedImageIndex(originalIndex)}
+                      >
+                        <div className="w-28 bg-white rounded-xl shadow-md overflow-hidden border border-gray-100 transition-all duration-200 active:scale-95 hover:shadow-lg cursor-pointer">
+                          {/* Document Preview */}
+                          <div className="aspect-[3/4] bg-gradient-to-b from-gray-50 to-gray-100 relative overflow-hidden">
+                            <img
+                              key={`${file.name}-${file.createdAt}-${cacheVersion}`}
+                              src={`/uploads/1/pending/${file.name}?v=${file.createdAt}&t=${cacheVersion}&r=${Math.random()}`}
+                              alt={file.name}
+                              className="w-full h-full object-cover"
+                            />
+                            {/* Page Number Badge */}
+                            <div className="absolute top-2 right-2 bg-black/60 backdrop-blur-sm text-white text-[10px] font-medium px-2 py-0.5 rounded-full">
+                              {displayNumber}
+                            </div>
+                          </div>
+                          {/* Document Footer */}
+                          <div className="px-2 py-2 bg-white border-t border-gray-100">
+                            <p className="text-[10px] text-gray-500 truncate text-center">
+                              หน้า {displayNumber}
+                            </p>
                           </div>
                         </div>
-                        {/* Document Footer */}
-                        <div className="px-2 py-2 bg-white border-t border-gray-100">
-                          <p className="text-[10px] text-gray-500 truncate text-center">
-                            หน้า {index + 1}
-                          </p>
-                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
 
                   {/* View More Card */}
                   {!showAllImages && data.pending.length > 6 && (
@@ -895,15 +1080,36 @@ export default function ClientOnePage() {
 
                   {/* Image */}
                   <img
-                    src={`/uploads/1/pending/${data.pending[selectedImageIndex].name}?t=${data.pending[selectedImageIndex].createdAt}`}
+                    key={`${data.pending[selectedImageIndex].name}-${data.pending[selectedImageIndex].createdAt}-${cacheVersion}`}
+                    src={`/uploads/1/pending/${data.pending[selectedImageIndex].name}?v=${data.pending[selectedImageIndex].createdAt}&t=${cacheVersion}&r=${Math.random()}`}
                     alt={data.pending[selectedImageIndex].name}
                     className="max-w-full max-h-[85vh] object-contain rounded-lg shadow-2xl"
                     onClick={(e) => e.stopPropagation()}
                   />
 
-                  {/* Image Counter */}
-                  <div className="absolute bottom-6 left-1/2 -translate-x-1/2 bg-black/50 backdrop-blur-sm text-white px-4 py-2 rounded-full text-sm font-medium">
-                    {selectedImageIndex + 1} / {data.pending.length}
+                  {/* Image Counter & Slider */}
+                  <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex flex-col items-center gap-3">
+                    <div className="bg-black/50 backdrop-blur-sm text-white px-4 py-2 rounded-full text-sm font-medium">
+                      {selectedImageIndex + 1} / {data.pending.length}
+                    </div>
+                    {data.pending.length > 1 && (
+                      <div className="flex items-center gap-3 bg-black/50 backdrop-blur-sm px-4 py-2 rounded-full">
+                        <span className="text-white text-xs">1</span>
+                        <input
+                          type="range"
+                          min="0"
+                          max={data.pending.length - 1}
+                          value={selectedImageIndex}
+                          onChange={(e) => {
+                            e.stopPropagation();
+                            setSelectedImageIndex(Number(e.target.value));
+                          }}
+                          onClick={(e) => e.stopPropagation()}
+                          className="w-48 h-2 bg-white/20 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:cursor-pointer [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:bg-white [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:cursor-pointer [&::-moz-range-thumb]:border-0"
+                        />
+                        <span className="text-white text-xs">{data.pending.length}</span>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -1093,13 +1299,18 @@ export default function ClientOnePage() {
                       <p className="font-semibold text-gray-800">{folder.name}</p>
                       <p className="text-xs text-gray-500">{folder.fileCount} ไฟล์</p>
                     </div>
-                    <a
-                      href={`/uploads/1/completed/${folder.name}`}
-                      target="_blank"
-                      className="text-blue-600 text-sm"
+                    <button
+                      onClick={() => setUploadToGroupModal({isOpen: true, groupName: folder.name})}
+                      className="px-3 py-1 bg-purple-600 text-white text-sm rounded-md hover:bg-purple-700 transition-colors mr-2"
+                    >
+                      + PDF
+                    </button>
+                    <button
+                      onClick={() => handleViewCompletedFolder(folder.name)}
+                      className="px-3 py-1 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700 transition-colors"
                     >
                       ดู
-                    </a>
+                    </button>
                   </div>
                 </div>
               ))}
@@ -1208,6 +1419,234 @@ export default function ClientOnePage() {
                 </button>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Upload PDF to Group Modal */}
+      {uploadToGroupModal.isOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
+            <h3 className="text-xl font-bold text-gray-800 mb-4">
+              Upload PDF ย้อนหลัง
+            </h3>
+            <p className="text-sm text-gray-600 mb-4">
+              เพิ่มรูปจาก PDF ไปต่อท้ายใน: <span className="font-semibold">{uploadToGroupModal.groupName}</span>
+            </p>
+            <input
+              ref={pdfToGroupInputRef}
+              type="file"
+              accept=".pdf"
+              onChange={handleUploadPDFToGroup}
+              className="hidden"
+            />
+            <div className="flex gap-3">
+              <button
+                onClick={() => pdfToGroupInputRef.current?.click()}
+                className="flex-1 bg-purple-600 text-white py-3 rounded-lg font-semibold hover:bg-purple-700 transition-colors"
+              >
+                เลือกไฟล์ PDF
+              </button>
+              <button
+                onClick={() => setUploadToGroupModal({isOpen: false, groupName: ""})}
+                className="flex-1 bg-gray-300 text-gray-700 py-3 rounded-lg font-semibold hover:bg-gray-400 transition-colors"
+              >
+                ยกเลิก
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Upload PDF to Group Progress Modal */}
+      {uploadToGroupProgress.isOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
+            {/* Header */}
+            <div className="bg-gradient-to-r from-purple-600 to-purple-500 px-6 py-5">
+              <h3 className="text-xl font-bold text-white flex items-center gap-2">
+                {uploadToGroupProgress.isComplete ? (
+                  <>
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                    Upload สำเร็จ
+                  </>
+                ) : uploadToGroupProgress.isError ? (
+                  <>
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                    เกิดข้อผิดพลาด
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-6 h-6 animate-spin" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    กำลัง Upload...
+                  </>
+                )}
+              </h3>
+            </div>
+
+            {/* Body */}
+            <div className="px-6 py-5 space-y-4">
+              {uploadToGroupProgress.isError ? (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                  <p className="text-red-800 text-sm font-medium">
+                    {uploadToGroupProgress.errorMessage || "เกิดข้อผิดพลาด"}
+                  </p>
+                </div>
+              ) : (
+                <>
+                  {/* Progress Bar */}
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-sm">
+                      <span className="text-gray-600 font-medium">{uploadToGroupProgress.step}</span>
+                      <span className="text-purple-600 font-bold">{uploadToGroupProgress.percent}%</span>
+                    </div>
+                    <div className="h-3 bg-gray-200 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-gradient-to-r from-purple-500 to-purple-600 transition-all duration-300 ease-out rounded-full"
+                        style={{ width: `${uploadToGroupProgress.percent}%` }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Status Message */}
+                  <div className="bg-gray-50 rounded-lg p-3">
+                    <p className="text-gray-700 text-sm font-medium">{uploadToGroupProgress.message}</p>
+                    {uploadToGroupProgress.current !== undefined && uploadToGroupProgress.total !== undefined && (
+                      <p className="text-gray-500 text-xs mt-1">
+                        หน้า {uploadToGroupProgress.current} จาก {uploadToGroupProgress.total}
+                      </p>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* Footer */}
+            {(uploadToGroupProgress.isComplete || uploadToGroupProgress.isError) && (
+              <div className="px-6 pb-5">
+                <button
+                  onClick={closeUploadToGroupModal}
+                  className={`w-full py-3 rounded-lg font-semibold transition-colors ${
+                    uploadToGroupProgress.isError
+                      ? 'bg-red-500 hover:bg-red-600 text-white'
+                      : 'bg-green-500 hover:bg-green-600 text-white'
+                  }`}
+                >
+                  {uploadToGroupProgress.isError ? 'ปิด' : 'เสร็จสิ้น'}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Completed Folder Image Preview Modal */}
+      {selectedCompletedFolder && selectedCompletedImageIndex !== null && completedFolderImages.length > 0 && (
+        <div
+          className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4"
+          onClick={closeCompletedImageModal}
+        >
+          {/* Close Button */}
+          <button
+            className="absolute top-4 right-4 w-10 h-10 bg-white/20 backdrop-blur-sm rounded-full flex items-center justify-center text-white hover:bg-white/30 transition-colors"
+            onClick={closeCompletedImageModal}
+          >
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+
+          {/* Previous Button */}
+          <button
+            className="absolute left-4 top-1/2 -translate-y-1/2 w-12 h-12 bg-white/20 backdrop-blur-sm rounded-full flex items-center justify-center text-white hover:bg-white/30 transition-colors"
+            onClick={(e) => {
+              e.stopPropagation();
+              handlePreviousCompletedImage();
+            }}
+          >
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            </svg>
+          </button>
+
+          {/* Next Button */}
+          <button
+            className="absolute right-4 top-1/2 -translate-y-1/2 w-12 h-12 bg-white/20 backdrop-blur-sm rounded-full flex items-center justify-center text-white hover:bg-white/30 transition-colors"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleNextCompletedImage();
+            }}
+          >
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+          </button>
+
+          {/* Image with Loading */}
+          <div className="relative flex items-center justify-center">
+            {imageLoading && (
+              <div className="absolute inset-0 flex items-center justify-center">
+                <svg className="w-12 h-12 text-white animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+              </div>
+            )}
+            {imageError ? (
+              <div className="bg-red-500/20 backdrop-blur-sm text-white px-6 py-4 rounded-lg">
+                <p className="text-lg font-semibold">ไม่สามารถโหลดรูปภาพได้</p>
+                <p className="text-sm mt-2">{completedFolderImages[selectedCompletedImageIndex]}</p>
+              </div>
+            ) : (
+              <img
+                key={`${selectedCompletedFolder}-${completedFolderImages[selectedCompletedImageIndex]}-${cacheVersion}`}
+                src={`/uploads/1/completed/${selectedCompletedFolder}/${completedFolderImages[selectedCompletedImageIndex]}?v=${cacheVersion}&r=${Math.random()}`}
+                alt={completedFolderImages[selectedCompletedImageIndex]}
+                className="max-w-full max-h-[85vh] object-contain rounded-lg shadow-2xl"
+                style={{ display: imageLoading ? 'none' : 'block' }}
+                onClick={(e) => e.stopPropagation()}
+                onLoadStart={() => setImageLoading(true)}
+                onLoad={() => { setImageLoading(false); setImageError(false); }}
+                onError={() => { setImageLoading(false); setImageError(true); }}
+              />
+            )}
+          </div>
+
+          {/* Image Counter & Slider */}
+          <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex flex-col items-center gap-3">
+            <div className="bg-black/50 backdrop-blur-sm text-white px-4 py-2 rounded-full text-sm font-medium">
+              {selectedCompletedImageIndex + 1} / {completedFolderImages.length}
+            </div>
+            {completedFolderImages.length > 1 && (
+              <div className="flex items-center gap-3 bg-black/50 backdrop-blur-sm px-4 py-2 rounded-full">
+                <span className="text-white text-xs">1</span>
+                <input
+                  type="range"
+                  min="0"
+                  max={completedFolderImages.length - 1}
+                  value={selectedCompletedImageIndex}
+                  onChange={(e) => {
+                    e.stopPropagation();
+                    setSelectedCompletedImageIndex(Number(e.target.value));
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                  className="w-48 h-2 bg-white/20 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:cursor-pointer [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:bg-white [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:cursor-pointer [&::-moz-range-thumb]:border-0"
+                />
+                <span className="text-white text-xs">{completedFolderImages.length}</span>
+              </div>
+            )}
+          </div>
+
+          {/* Folder Name */}
+          <div className="absolute top-4 left-4 bg-black/50 backdrop-blur-sm text-white px-4 py-2 rounded-full text-sm font-medium">
+            {selectedCompletedFolder}
           </div>
         </div>
       )}

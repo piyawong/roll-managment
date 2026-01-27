@@ -2,7 +2,6 @@ import { NextRequest } from "next/server";
 import fs from "fs/promises";
 import path from "path";
 import { PDFDocument } from "pdf-lib";
-import sharp from "sharp";
 import { exec } from "child_process";
 import { promisify } from "util";
 
@@ -45,7 +44,6 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const pendingDir = path.join(UPLOADS_DIR, id, "pending");
   const tempDir = path.join(process.cwd(), "tmp");
   const timestamp = Date.now();
   const tempPdfPath = path.join(tempDir, `upload_${timestamp}.pdf`);
@@ -55,7 +53,7 @@ export async function POST(
   // Process in background
   (async () => {
     try {
-      // Step 1: Receive PDF
+      // Step 1: Receive PDF and group name
       send({
         type: "progress",
         step: "receiving",
@@ -65,6 +63,7 @@ export async function POST(
 
       const formData = await request.formData();
       const file = formData.get("pdf") as File | null;
+      const groupName = formData.get("groupName") as string | null;
 
       if (!file) {
         send({ type: "error", error: "No PDF file provided" });
@@ -72,8 +71,25 @@ export async function POST(
         return;
       }
 
+      if (!groupName) {
+        send({ type: "error", error: "No group name provided" });
+        close();
+        return;
+      }
+
       if (!file.name.toLowerCase().endsWith(".pdf")) {
         send({ type: "error", error: "File must be a PDF" });
+        close();
+        return;
+      }
+
+      const groupDir = path.join(UPLOADS_DIR, id, "completed", groupName);
+
+      // Check if group exists
+      try {
+        await fs.access(groupDir);
+      } catch {
+        send({ type: "error", error: `Group "${groupName}" not found` });
         close();
         return;
       }
@@ -86,7 +102,6 @@ export async function POST(
         message: "กำลังบันทึกไฟล์ชั่วคราว...",
       });
 
-      await fs.mkdir(pendingDir, { recursive: true });
       await fs.mkdir(tempDir, { recursive: true });
 
       const arrayBuffer = await file.arrayBuffer();
@@ -110,6 +125,14 @@ export async function POST(
 
       const savedFiles: string[] = [];
       let totalPages = 0;
+
+      // Get existing files in group to determine next file number
+      const existingFiles = await fs.readdir(groupDir);
+      const existingNumbers = existingFiles
+        .filter(f => f.match(/^\d+\.jpeg$/))
+        .map(f => parseInt(f.replace('.jpeg', '')))
+        .filter(n => !isNaN(n));
+      const startNumber = existingNumbers.length > 0 ? Math.max(...existingNumbers) + 1 : 1;
 
       if (usePdftoppm) {
         // Use pdftoppm method
@@ -147,10 +170,9 @@ export async function POST(
           const sourceFile = pageFiles[i];
           const sourcePath = path.join(tempDir, sourceFile);
 
-          const fileTimestamp = Date.now();
-          const pageNum = i + 1;
-          const fileName = `scan_${fileTimestamp}_page${pageNum}.jpeg`;
-          const destPath = path.join(pendingDir, fileName);
+          const fileNumber = startNumber + i;
+          const fileName = `${fileNumber}.jpeg`;
+          const destPath = path.join(groupDir, fileName);
 
           const imageData = await fs.readFile(sourcePath);
           await fs.writeFile(destPath, imageData);
@@ -194,7 +216,7 @@ export async function POST(
           message: `พบ ${totalPages} หน้า (ใช้ pure JS mode)...`,
         });
 
-        // Extract each page as a separate PDF, then convert with Sharp
+        // Extract each page as a separate PDF, then convert with ImageMagick
         for (let i = 0; i < totalPages; i++) {
           const singlePagePdf = await PDFDocument.create();
           const [copiedPage] = await singlePagePdf.copyPages(pdfDoc, [i]);
@@ -207,10 +229,9 @@ export async function POST(
           await fs.writeFile(pagePdfPath, singlePageBytes);
 
           // Convert using ImageMagick's convert command (fallback)
-          const fileTimestamp = Date.now();
-          const pageNum = i + 1;
-          const fileName = `scan_${fileTimestamp}_page${pageNum}.jpeg`;
-          const destPath = path.join(pendingDir, fileName);
+          const fileNumber = startNumber + i;
+          const fileName = `${fileNumber}.jpeg`;
+          const destPath = path.join(groupDir, fileName);
 
           try {
             // Try using ImageMagick convert
@@ -218,7 +239,7 @@ export async function POST(
               `convert -density 150 "${pagePdfPath}" -quality 85 "${destPath}"`
             );
           } catch {
-            // If convert fails, just save a placeholder message
+            // If convert fails, return error
             send({
               type: "error",
               error: "PDF conversion failed. Please install poppler-utils (pdftoppm) or ImageMagick (convert):\n\nOn macOS: brew install poppler imagemagick\nOn Ubuntu/Debian: sudo apt-get install poppler-utils imagemagick",
@@ -254,20 +275,20 @@ export async function POST(
       send({
         type: "complete",
         percent: 100,
-        message: `แตก PDF ${totalPages} หน้าเรียบร้อย`,
+        message: `เพิ่ม PDF ${totalPages} หน้าเข้า ${groupName} เรียบร้อย`,
       });
 
       close();
     } catch (error) {
       // Detailed error logging
-      console.error("=== PDF Upload Error ===");
+      console.error("=== PDF Upload to Group Error ===");
       console.error("Timestamp:", new Date().toISOString());
       console.error("Client ID:", id);
       console.error("Error:", error);
       console.error("Error Type:", error instanceof Error ? error.constructor.name : typeof error);
       console.error("Error Message:", error instanceof Error ? error.message : String(error));
       console.error("Error Stack:", error instanceof Error ? error.stack : "No stack trace");
-      console.error("========================");
+      console.error("=================================");
 
       // Cleanup
       try {

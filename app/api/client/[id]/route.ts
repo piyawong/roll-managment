@@ -81,6 +81,8 @@ export async function POST(
 ) {
   const { id } = await params;
   const body = await request.json();
+  console.log(`[POST /api/client/${id}] Start processing...`);
+  console.log(`[POST /api/client/${id}] Body:`, JSON.stringify(body));
 
   let folderName: string;
 
@@ -106,10 +108,10 @@ export async function POST(
     folderName = parts.join("-");
 
     // ยิง API ไปที่ portal server
-    console.log("=== Registering Organization to Portal ===");
-    console.log("Timestamp:", new Date().toISOString());
-    console.log("Portal URL:", "http://46.250.238.125:4004/organizations/register");
-    console.log("Request Data:", {
+    console.log(`[POST /api/client/${id}] === Registering Organization to Portal ===`);
+    console.log(`[POST /api/client/${id}] Timestamp:`, new Date().toISOString());
+    console.log(`[POST /api/client/${id}] Portal URL:`, "http://46.250.238.125:4004/organizations/register");
+    console.log(`[POST /api/client/${id}] Request Data:`, {
       districtOfficeName: districtOfficeName.trim(),
       orderNumber: orderNumber || undefined,
       name: name.trim(),
@@ -132,15 +134,15 @@ export async function POST(
         }),
       });
 
-      console.log("Portal Response Status:", registerResponse.status);
-      console.log("Portal Response OK:", registerResponse.ok);
+      console.log(`[POST /api/client/${id}] Portal Response Status:`, registerResponse.status);
+      console.log(`[POST /api/client/${id}] Portal Response OK:`, registerResponse.ok);
 
       if (!registerResponse.ok) {
         const errorData = await registerResponse.json();
-        console.error("=== Portal Registration Failed ===");
-        console.error("Status:", registerResponse.status);
-        console.error("Error Data:", errorData);
-        console.error("=====================================");
+        console.error(`[POST /api/client/${id}] === Portal Registration Failed ===`);
+        console.error(`[POST /api/client/${id}] Status:`, registerResponse.status);
+        console.error(`[POST /api/client/${id}] Error Data:`, errorData);
+        console.error(`[POST /api/client/${id}] =====================================`);
         return NextResponse.json(
           { error: `ไม่สามารถลงทะเบียนองค์กรที่ Portal ได้: ${errorData.message || errorData.error || 'Unknown error'}`, details: errorData },
           { status: 500 }
@@ -148,15 +150,15 @@ export async function POST(
       }
 
       const registerResult = await registerResponse.json();
-      console.log("=== Portal Registration Success ===");
-      console.log("Result:", registerResult);
-      console.log("===================================");
+      console.log(`[POST /api/client/${id}] === Portal Registration Success ===`);
+      console.log(`[POST /api/client/${id}] Result:`, registerResult);
+      console.log(`[POST /api/client/${id}] ===================================`);
     } catch (error) {
-      console.error("=== Portal Connection Error ===");
-      console.error("Error:", error);
-      console.error("Error Type:", error instanceof Error ? error.constructor.name : typeof error);
-      console.error("Error Message:", error instanceof Error ? error.message : String(error));
-      console.error("==============================");
+      console.error(`[POST /api/client/${id}] === Portal Connection Error ===`);
+      console.error(`[POST /api/client/${id}] Error:`, error);
+      console.error(`[POST /api/client/${id}] Error Type:`, error instanceof Error ? error.constructor.name : typeof error);
+      console.error(`[POST /api/client/${id}] Error Message:`, error instanceof Error ? error.message : String(error));
+      console.error(`[POST /api/client/${id}] ==============================`);
       return NextResponse.json(
         { error: `เกิดข้อผิดพลาดในการเชื่อมต่อกับ Portal: ${error instanceof Error ? error.message : 'Unknown error'}` },
         { status: 500 }
@@ -230,15 +232,18 @@ export async function POST(
       // file.txt อาจไม่มี
     }
 
+    console.log(`[POST /api/client/${id}] Success! Folder: ${folderName}, Files: ${fileStats.length}`);
     return NextResponse.json({
       success: true,
       folderName: folderName.trim(),
       filesProcessed: fileStats.length,
     });
   } catch (error) {
-    console.error("Error processing files:", error);
+    console.error(`[POST /api/client/${id}] Error processing files:`, error);
+    console.error(`[POST /api/client/${id}] Error type:`, error instanceof Error ? error.constructor.name : typeof error);
+    console.error(`[POST /api/client/${id}] Error message:`, error instanceof Error ? error.message : String(error));
     return NextResponse.json(
-      { error: "Failed to process files" },
+      { error: "Failed to process files", details: error instanceof Error ? error.message : String(error) },
       { status: 500 }
     );
   }

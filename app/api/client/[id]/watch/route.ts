@@ -144,37 +144,29 @@ export async function GET(
       // ส่งข้อมูลเริ่มต้นทันที
       await sendData();
 
-      // ใช้ chokidar watch ทั้ง pending และ completed
-      const watcher = chokidar.watch([pendingDir, completedDir], {
-        ignoreInitial: true,
-        ignored: [/(^|[\/\\])\./, /file\.txt$/],
-        persistent: true,
-        awaitWriteFinish: {
-          stabilityThreshold: 500,
-          pollInterval: 100,
-        },
-      });
+      // ใช้ polling แทน chokidar เพื่อหลีกเลี่ยง spawn EBADF error
+      console.log("[Watch] Using polling mode (every 2 seconds)");
 
-      // เมื่อมีการเปลี่ยนแปลง
-      watcher.on("all", async (event, filePath) => {
-        const now = formatDateTime(new Date());
-        const isPending = filePath.includes("/pending/");
-        const filename = path.basename(filePath);
-        const isImage = /\.(jpg|jpeg|png|gif|webp)$/i.test(filename);
+      let lastPendingHash = "";
+      let lastCompletedHash = "";
 
-        if (isPending && isImage) {
-          if (event === "add") {
-            console.log(`[Watch] [${now}] ไฟล์ใหม่เข้า pending: ${filename}`);
-            await addFileMetadata(id, filename);
-          } else if (event === "unlink") {
-            console.log(`[Watch] [${now}] ไฟล์ถูกลบจาก pending: ${filename}`);
-            await removeFileMetadata(id, filename);
+      const pollingInterval = setInterval(async () => {
+        try {
+          const pending = await getPendingFiles(id);
+          const completed = await getCompletedFolders(id);
+
+          const pendingHash = JSON.stringify(pending.filter(f => f !== null).map(f => f.name).sort());
+          const completedHash = JSON.stringify(completed.filter(f => f !== null).map(f => f.name).sort());
+
+          if (pendingHash !== lastPendingHash || completedHash !== lastCompletedHash) {
+            lastPendingHash = pendingHash;
+            lastCompletedHash = completedHash;
+            await sendData();
           }
-        } else {
-          console.log(`[Watch] [${now}] ${event}: ${filePath}`);
+        } catch (error) {
+          console.error("[Watch] Polling error:", error);
         }
-        await sendData();
-      });
+      }, 2000);
 
       // Heartbeat ทุก 30 วิ เพื่อ keep connection alive
       const heartbeat = setInterval(() => {
@@ -185,7 +177,7 @@ export async function GET(
       request.signal.addEventListener("abort", () => {
         console.log("[Watch] Connection closed");
         clearInterval(heartbeat);
-        watcher.close();
+        clearInterval(pollingInterval);
         controller.close();
       });
     },
