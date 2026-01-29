@@ -952,6 +952,7 @@ export default function ClientOnePage() {
                               src={`/uploads/1/pending/${file.name}?v=${file.createdAt}&t=${cacheVersion}`}
                               alt={file.name}
                               className="w-full h-full object-cover"
+                              loading="lazy"
                             />
                             {/* Page Number Badge */}
                             <div className="absolute top-2 right-2 bg-black/60 backdrop-blur-sm text-white text-[10px] font-medium px-2 py-0.5 rounded-full">
@@ -1084,6 +1085,7 @@ export default function ClientOnePage() {
                     src={`/uploads/1/pending/${data.pending[selectedImageIndex].name}?v=${data.pending[selectedImageIndex].createdAt}&t=${cacheVersion}`}
                     alt={data.pending[selectedImageIndex].name}
                     className="max-w-full max-h-[85vh] object-contain rounded-lg shadow-2xl"
+                    loading="lazy"
                     onClick={(e) => e.stopPropagation()}
                   />
 
@@ -1610,6 +1612,7 @@ export default function ClientOnePage() {
                 src={`/uploads/1/completed/${selectedCompletedFolder}/${completedFolderImages[selectedCompletedImageIndex]}?v=${cacheVersion}`}
                 alt={completedFolderImages[selectedCompletedImageIndex]}
                 className="max-w-full max-h-[85vh] object-contain rounded-lg shadow-2xl"
+                    loading="lazy"
                 style={{ display: imageLoading ? 'none' : 'block' }}
                 onClick={(e) => e.stopPropagation()}
                 onLoadStart={() => setImageLoading(true)}
