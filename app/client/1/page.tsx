@@ -949,7 +949,7 @@ export default function ClientOnePage() {
                           <div className="aspect-[3/4] bg-gradient-to-b from-gray-50 to-gray-100 relative overflow-hidden">
                             <img
                               key={`${file.name}-${file.createdAt}-${cacheVersion}`}
-                              src={`/uploads/1/pending/${file.name}?v=${file.createdAt}&t=${cacheVersion}&r=${Math.random()}`}
+                              src={`/uploads/1/pending/${file.name}?v=${file.createdAt}&t=${cacheVersion}`}
                               alt={file.name}
                               className="w-full h-full object-cover"
                             />
@@ -1081,7 +1081,7 @@ export default function ClientOnePage() {
                   {/* Image */}
                   <img
                     key={`${data.pending[selectedImageIndex].name}-${data.pending[selectedImageIndex].createdAt}-${cacheVersion}`}
-                    src={`/uploads/1/pending/${data.pending[selectedImageIndex].name}?v=${data.pending[selectedImageIndex].createdAt}&t=${cacheVersion}&r=${Math.random()}`}
+                    src={`/uploads/1/pending/${data.pending[selectedImageIndex].name}?v=${data.pending[selectedImageIndex].createdAt}&t=${cacheVersion}`}
                     alt={data.pending[selectedImageIndex].name}
                     className="max-w-full max-h-[85vh] object-contain rounded-lg shadow-2xl"
                     onClick={(e) => e.stopPropagation()}
@@ -1607,7 +1607,7 @@ export default function ClientOnePage() {
             ) : (
               <img
                 key={`${selectedCompletedFolder}-${completedFolderImages[selectedCompletedImageIndex]}-${cacheVersion}`}
-                src={`/uploads/1/completed/${selectedCompletedFolder}/${completedFolderImages[selectedCompletedImageIndex]}?v=${cacheVersion}&r=${Math.random()}`}
+                src={`/uploads/1/completed/${selectedCompletedFolder}/${completedFolderImages[selectedCompletedImageIndex]}?v=${cacheVersion}`}
                 alt={completedFolderImages[selectedCompletedImageIndex]}
                 className="max-w-full max-h-[85vh] object-contain rounded-lg shadow-2xl"
                 style={{ display: imageLoading ? 'none' : 'block' }}

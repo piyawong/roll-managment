@@ -872,7 +872,7 @@ export default function ClientOnePage() {
                           {/* Document Preview */}
                           <div className="aspect-[3/4] bg-gradient-to-b from-gray-50 to-gray-100 relative overflow-hidden">
                             <img key={`${file.name}-${file.createdAt}-${cacheVersion}`}
-                              src={`/uploads/7/pending/${file.name}?v=${file.createdAt}&t=${cacheVersion}&r=${Math.random()}`}
+                              src={`/uploads/7/pending/${file.name}?v=${file.createdAt}&t=${cacheVersion}`}
                               alt={file.name}
                               className="w-full h-full object-cover"
                             />
@@ -1004,7 +1004,7 @@ export default function ClientOnePage() {
                   {/* Image */}
                   <img
                     key={`${data.pending[selectedImageIndex].name}-${data.pending[selectedImageIndex].createdAt}-${cacheVersion}`}
-                    src={`/uploads/7/pending/${data.pending[selectedImageIndex].name}?v=${data.pending[selectedImageIndex].createdAt}&t=${cacheVersion}&r=${Math.random()}`}
+                    src={`/uploads/7/pending/${data.pending[selectedImageIndex].name}?v=${data.pending[selectedImageIndex].createdAt}&t=${cacheVersion}`}
                     alt={data.pending[selectedImageIndex].name}
                     className="max-w-full max-h-[85vh] object-contain rounded-lg shadow-2xl"
                     onClick={(e) => e.stopPropagation()}
@@ -1362,7 +1362,7 @@ export default function ClientOnePage() {
           <button className="absolute top-4 right-4 w-10 h-10 bg-white/20 backdrop-blur-sm rounded-full flex items-center justify-center text-white hover:bg-white/30 transition-colors" onClick={closeCompletedImageModal}><svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg></button>
           <button className="absolute left-4 top-1/2 -translate-y-1/2 w-12 h-12 bg-white/20 backdrop-blur-sm rounded-full flex items-center justify-center text-white hover:bg-white/30 transition-colors" onClick={(e) => { e.stopPropagation(); handlePreviousCompletedImage(); }}><svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg></button>
           <button className="absolute right-4 top-1/2 -translate-y-1/2 w-12 h-12 bg-white/20 backdrop-blur-sm rounded-full flex items-center justify-center text-white hover:bg-white/30 transition-colors" onClick={(e) => { e.stopPropagation(); handleNextCompletedImage(); }}><svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg></button>
-          <img key={`${selectedCompletedFolder}-${completedFolderImages[selectedCompletedImageIndex]}-${cacheVersion}`} src={`/uploads/7/completed/${selectedCompletedFolder}/${completedFolderImages[selectedCompletedImageIndex]}?v=${cacheVersion}&r=${Math.random()}`} alt={completedFolderImages[selectedCompletedImageIndex]} className="max-w-full max-h-[85vh] object-contain rounded-lg shadow-2xl" onClick={(e) => e.stopPropagation()} />
+          <img key={`${selectedCompletedFolder}-${completedFolderImages[selectedCompletedImageIndex]}-${cacheVersion}`} src={`/uploads/7/completed/${selectedCompletedFolder}/${completedFolderImages[selectedCompletedImageIndex]}?v=${cacheVersion}`} alt={completedFolderImages[selectedCompletedImageIndex]} className="max-w-full max-h-[85vh] object-contain rounded-lg shadow-2xl" onClick={(e) => e.stopPropagation()} />
           <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex flex-col items-center gap-3">
             <div className="bg-black/50 backdrop-blur-sm text-white px-4 py-2 rounded-full text-sm font-medium">{selectedCompletedImageIndex + 1} / {completedFolderImages.length}</div>
             {completedFolderImages.length > 1 && (<div className="flex items-center gap-3 bg-black/50 backdrop-blur-sm px-4 py-2 rounded-full"><span className="text-white text-xs">1</span><input type="range" min="0" max={completedFolderImages.length - 1} value={selectedCompletedImageIndex} onChange={(e) => { e.stopPropagation(); setSelectedCompletedImageIndex(Number(e.target.value)); }} onClick={(e) => e.stopPropagation()} className="w-48 h-2 bg-white/20 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:cursor-pointer [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:bg-white [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:cursor-pointer [&::-moz-range-thumb]:border-0" /><span className="text-white text-xs">{completedFolderImages.length}</span></div>)}
