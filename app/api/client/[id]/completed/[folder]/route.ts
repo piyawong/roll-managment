@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import fs from "fs/promises";
 import path from "path";
 
-const UPLOADS_DIR = path.join(process.cwd(), "public/uploads");
+const UPLOADS_DIR = path.join(process.cwd(), "uploads");
 
 export async function GET(
   request: NextRequest,

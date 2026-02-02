@@ -3,11 +3,13 @@ import path from 'path';
 
 /**
  * สร้าง directory structure สำหรับ client
- * - public/uploads/{clientId}/pending
- * - public/uploads/{clientId}/completed
+ * - uploads/{clientId}/pending
+ * - uploads/{clientId}/completed
+ * Note: ย้ายจาก public/uploads เป็น uploads (นอก public folder)
+ * เพื่อรองรับ production mode และ file watching แบบ real-time
  */
 export function ensureClientDirectories(clientId: string) {
-  const baseDir = path.join(process.cwd(), 'public', 'uploads', clientId);
+  const baseDir = path.join(process.cwd(), 'uploads', clientId);
   const pendingDir = path.join(baseDir, 'pending');
   const completedDir = path.join(baseDir, 'completed');
 

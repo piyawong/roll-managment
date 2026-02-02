@@ -1,19 +1,5 @@
-import { NextResponse } from "next/server";
+import { handleHealth } from "@/lib/scannerProxy";
 
 export async function GET() {
-  try {
-    const res = await fetch("http://localhost:9066/status", {
-      method: "GET",
-      signal: AbortSignal.timeout(3000),
-    });
-
-    if (res.ok) {
-      const data = await res.json();
-      return NextResponse.json(data);
-    } else {
-      return NextResponse.json({ status: "error" }, { status: res.status });
-    }
-  } catch {
-    return NextResponse.json({ status: "offline" }, { status: 503 });
-  }
+  return handleHealth(6);
 }

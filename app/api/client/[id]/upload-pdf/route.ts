@@ -7,7 +7,8 @@ import { exec } from "child_process";
 import { promisify } from "util";
 
 const execAsync = promisify(exec);
-const UPLOADS_DIR = path.join(process.cwd(), "public/uploads");
+const UPLOADS_DIR = path.join(process.cwd(), "uploads");
+const THUMBNAILS_DIR = path.join(process.cwd(), "uploads", ".thumbnails");
 
 interface ProgressEvent {
   type: "progress" | "complete" | "error";
@@ -17,6 +18,26 @@ interface ProgressEvent {
   percent?: number;
   message?: string;
   error?: string;
+}
+
+// Helper function to create thumbnail
+async function createThumbnail(sourceImagePath: string, thumbnailPath: string) {
+  try {
+    const imageBuffer = await fs.readFile(sourceImagePath);
+    const thumbnailBuffer = await sharp(imageBuffer)
+      .resize(400, 600, {
+        fit: "inside",
+        withoutEnlargement: true,
+      })
+      .jpeg({ quality: 80 })
+      .toBuffer();
+
+    await fs.mkdir(path.dirname(thumbnailPath), { recursive: true });
+    await fs.writeFile(thumbnailPath, thumbnailBuffer);
+  } catch (error) {
+    console.error("Error creating thumbnail:", error);
+    // Continue even if thumbnail creation fails
+  }
 }
 
 function createProgressStream() {
@@ -92,6 +113,14 @@ export async function POST(
       const arrayBuffer = await file.arrayBuffer();
       await fs.writeFile(tempPdfPath, Buffer.from(arrayBuffer));
 
+      // Get existing files to determine next number
+      const existingFiles = await fs.readdir(pendingDir);
+      const existingNumbers = existingFiles
+        .filter(f => /^\d+\.(jpg|jpeg|png)$/i.test(f))
+        .map(f => parseInt(f.replace(/\.(jpg|jpeg|png)$/i, '')))
+        .filter(n => !isNaN(n));
+      const startNumber = existingNumbers.length > 0 ? Math.max(...existingNumbers) + 1 : 1;
+
       // Step 3: Use pdftoppm if available, fallback to pdf-lib
       send({
         type: "progress",
@@ -147,13 +176,16 @@ export async function POST(
           const sourceFile = pageFiles[i];
           const sourcePath = path.join(tempDir, sourceFile);
 
-          const fileTimestamp = Date.now();
-          const pageNum = i + 1;
-          const fileName = `scan_${fileTimestamp}_page${pageNum}.jpeg`;
+          const fileNumber = startNumber + i;
+          const fileName = `${String(fileNumber).padStart(4, '0')}.jpeg`;
           const destPath = path.join(pendingDir, fileName);
 
           const imageData = await fs.readFile(sourcePath);
           await fs.writeFile(destPath, imageData);
+
+          // Create thumbnail
+          const thumbnailPath = path.join(THUMBNAILS_DIR, id, "pending", `thumb_${fileName}`);
+          await createThumbnail(destPath, thumbnailPath);
 
           savedFiles.push(fileName);
           await fs.unlink(sourcePath);
@@ -207,9 +239,8 @@ export async function POST(
           await fs.writeFile(pagePdfPath, singlePageBytes);
 
           // Convert using ImageMagick's convert command (fallback)
-          const fileTimestamp = Date.now();
-          const pageNum = i + 1;
-          const fileName = `scan_${fileTimestamp}_page${pageNum}.jpeg`;
+          const fileNumber = startNumber + i;
+          const fileName = `${String(fileNumber).padStart(4, '0')}.jpeg`;
           const destPath = path.join(pendingDir, fileName);
 
           try {
@@ -230,6 +261,10 @@ export async function POST(
             close();
             return;
           }
+
+          // Create thumbnail
+          const thumbnailPath = path.join(THUMBNAILS_DIR, id, "pending", `thumb_${fileName}`);
+          await createThumbnail(destPath, thumbnailPath);
 
           savedFiles.push(fileName);
           await fs.unlink(pagePdfPath);

@@ -1,8 +1,30 @@
 import { NextRequest, NextResponse } from "next/server";
 import fs from "fs/promises";
 import path from "path";
+import sharp from "sharp";
 
-const UPLOADS_DIR = path.join(process.cwd(), "public/uploads");
+const UPLOADS_DIR = path.join(process.cwd(), "uploads");
+const THUMBNAILS_DIR = path.join(process.cwd(), "uploads", ".thumbnails");
+
+// Helper function to create thumbnail
+async function createThumbnail(sourceImagePath: string, thumbnailPath: string) {
+  try {
+    const imageBuffer = await fs.readFile(sourceImagePath);
+    const thumbnailBuffer = await sharp(imageBuffer)
+      .resize(400, 600, {
+        fit: "inside",
+        withoutEnlargement: true,
+      })
+      .jpeg({ quality: 80 })
+      .toBuffer();
+
+    await fs.mkdir(path.dirname(thumbnailPath), { recursive: true });
+    await fs.writeFile(thumbnailPath, thumbnailBuffer);
+  } catch (error) {
+    console.error("Error creating thumbnail:", error);
+    // Continue even if thumbnail creation fails
+  }
+}
 
 // GET: ดึงข้อมูล pending files และ completed folders
 export async function GET(
@@ -184,6 +206,10 @@ export async function POST(
   const targetDir = path.join(completedDir, folderName);
 
   try {
+    // สร้าง directories ถ้ายังไม่มี
+    await fs.mkdir(pendingDir, { recursive: true });
+    await fs.mkdir(completedDir, { recursive: true });
+
     // ตรวจสอบว่ามี pending files หรือไม่
     const files = await fs.readdir(pendingDir);
     const imageFiles = files.filter(
@@ -214,7 +240,7 @@ export async function POST(
     // สร้าง target folder
     await fs.mkdir(targetDir, { recursive: true });
 
-    // ย้ายและ rename ไฟล์
+    // ย้ายและ rename ไฟล์ + สร้าง thumbnail ใน completed
     for (let i = 0; i < fileStats.length; i++) {
       const file = fileStats[i];
       const newName = `${i + 1}${file.ext}`;
@@ -222,6 +248,20 @@ export async function POST(
       const targetPath = path.join(targetDir, newName);
 
       await fs.rename(sourcePath, targetPath);
+
+      // สร้าง thumbnail ใน completed folder
+      const newThumbnailPath = path.join(THUMBNAILS_DIR, id, "completed", folderName, `thumb_${newName}`);
+      await createThumbnail(targetPath, newThumbnailPath);
+      console.log(`[POST /api/client/${id}] สร้าง thumbnail: thumb_${newName} ใน completed/${folderName}`);
+
+      // ลบ thumbnail ของไฟล์เดิมใน pending (ถ้ามี)
+      const oldThumbnailPath = path.join(THUMBNAILS_DIR, id, "pending", `thumb_${file.name}`);
+      try {
+        await fs.unlink(oldThumbnailPath);
+        console.log(`[POST /api/client/${id}] ลบ thumbnail: thumb_${file.name} จาก pending`);
+      } catch {
+        // Thumbnail อาจไม่มี
+      }
     }
 
     // ลบ file.txt (metadata) เมื่อย้ายไฟล์ทั้งหมดแล้ว
@@ -271,9 +311,21 @@ export async function DELETE(
       });
     }
 
-    // ลบไฟล์ทั้งหมด
+    // ลบไฟล์ทั้งหมด (ทั้งต้นฉบับและ thumbnail)
     await Promise.all(
-      imageFiles.map((file) => fs.unlink(path.join(pendingDir, file)))
+      imageFiles.map(async (file) => {
+        // ลบไฟล์ต้นฉบับ
+        await fs.unlink(path.join(pendingDir, file));
+
+        // ลบ thumbnail (ถ้ามี)
+        const thumbnailPath = path.join(THUMBNAILS_DIR, id, "pending", `thumb_${file}`);
+        try {
+          await fs.unlink(thumbnailPath);
+          console.log(`[Clear] ลบ thumbnail: thumb_${file}`);
+        } catch {
+          // Thumbnail อาจไม่มี
+        }
+      })
     );
 
     // ลบ file.txt (metadata) ด้วย

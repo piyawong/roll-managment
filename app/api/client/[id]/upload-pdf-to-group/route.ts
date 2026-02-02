@@ -2,11 +2,13 @@ import { NextRequest } from "next/server";
 import fs from "fs/promises";
 import path from "path";
 import { PDFDocument } from "pdf-lib";
+import sharp from "sharp";
 import { exec } from "child_process";
 import { promisify } from "util";
 
 const execAsync = promisify(exec);
-const UPLOADS_DIR = path.join(process.cwd(), "public/uploads");
+const UPLOADS_DIR = path.join(process.cwd(), "uploads");
+const THUMBNAILS_DIR = path.join(process.cwd(), "uploads", ".thumbnails");
 
 interface ProgressEvent {
   type: "progress" | "complete" | "error";
@@ -16,6 +18,26 @@ interface ProgressEvent {
   percent?: number;
   message?: string;
   error?: string;
+}
+
+// Helper function to create thumbnail
+async function createThumbnail(sourceImagePath: string, thumbnailPath: string) {
+  try {
+    const imageBuffer = await fs.readFile(sourceImagePath);
+    const thumbnailBuffer = await sharp(imageBuffer)
+      .resize(400, 600, {
+        fit: "inside",
+        withoutEnlargement: true,
+      })
+      .jpeg({ quality: 80 })
+      .toBuffer();
+
+    await fs.mkdir(path.dirname(thumbnailPath), { recursive: true });
+    await fs.writeFile(thumbnailPath, thumbnailBuffer);
+  } catch (error) {
+    console.error("Error creating thumbnail:", error);
+    // Continue even if thumbnail creation fails
+  }
 }
 
 function createProgressStream() {
@@ -177,6 +199,10 @@ export async function POST(
           const imageData = await fs.readFile(sourcePath);
           await fs.writeFile(destPath, imageData);
 
+          // Create thumbnail
+          const thumbnailPath = path.join(THUMBNAILS_DIR, id, "completed", groupName, `thumb_${fileName}`);
+          await createThumbnail(destPath, thumbnailPath);
+
           savedFiles.push(fileName);
           await fs.unlink(sourcePath);
 
@@ -251,6 +277,10 @@ export async function POST(
             close();
             return;
           }
+
+          // Create thumbnail
+          const thumbnailPath = path.join(THUMBNAILS_DIR, id, "completed", groupName, `thumb_${fileName}`);
+          await createThumbnail(destPath, thumbnailPath);
 
           savedFiles.push(fileName);
           await fs.unlink(pagePdfPath);

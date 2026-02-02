@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { useParams } from "next/navigation";
 
 // รายชื่อเขตทั้งหมดในกรุงเทพมหานคร
 const BANGKOK_DISTRICTS = [
@@ -92,11 +93,15 @@ interface ScannerStatus {
   device: string;
 }
 
-export default function ClientOnePage() {
+export default function ClientPage() {
+  const params = useParams();
+  const id = params?.id as string;
+
+  // Determine scanner endpoint
+  const scannerEndpoint = id === "1" ? "/api/scanner" : `/api/scanner-${id}`;
   const [data, setData] = useState<ClientData | null>(null);
   const [connected, setConnected] = useState(false);
   const [isFinishing, setIsFinishing] = useState(false);
-  const [cacheVersion, setCacheVersion] = useState(Date.now());
   const [formData, setFormData] = useState({
     districtOfficeName: "",
     orderNumber: "",
@@ -107,7 +112,6 @@ export default function ClientOnePage() {
   const [processing, setProcessing] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [clearing, setClearing] = useState(false);
-  const [showAllImages, setShowAllImages] = useState(false);
   const [selectedImageIndex, setSelectedImageIndex] = useState<number | null>(null);
   const [deletingImage, setDeletingImage] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<UploadProgress>({
@@ -143,9 +147,14 @@ export default function ClientOnePage() {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const completedScrollContainerRef = useRef<HTMLDivElement>(null);
   const districtDropdownRef = useRef<HTMLDivElement>(null);
+  const [touchStart, setTouchStart] = useState<number | null>(null);
+  const [touchEnd, setTouchEnd] = useState<number | null>(null);
+  const [currentImageIndex, setCurrentImageIndex] = useState(0);
 
   useEffect(() => {
-    const eventSource = new EventSource("/api/client/1/watch");
+    if (!id) return;
+
+    const eventSource = new EventSource(`/api/client/${id}/watch`);
 
     eventSource.onopen = () => {
       console.log("SSE connected");
@@ -156,7 +165,6 @@ export default function ClientOnePage() {
       try {
         const json = JSON.parse(event.data);
         setData(json);
-        setCacheVersion(Date.now());
       } catch (error) {
         console.error("Failed to parse SSE data:", error);
       }
@@ -170,7 +178,7 @@ export default function ClientOnePage() {
     return () => {
       eventSource.close();
     };
-  }, []);
+  }, [id]);
 
   useEffect(() => {
     // Reset image loading state when changing images
@@ -180,11 +188,169 @@ export default function ClientOnePage() {
     }
   }, [selectedCompletedImageIndex, selectedCompletedFolder]);
 
+  // Swipe handlers
+  const minSwipeDistance = 50;
+
+  const onTouchStart = (e: React.TouchEvent) => {
+    setTouchEnd(null);
+    setTouchStart(e.targetTouches[0].clientX);
+  };
+
+  const onTouchMove = (e: React.TouchEvent) => {
+    setTouchEnd(e.targetTouches[0].clientX);
+  };
+
+  const onTouchEnd = () => {
+    if (!touchStart || !touchEnd) return;
+
+    const distance = touchStart - touchEnd;
+    const isLeftSwipe = distance > minSwipeDistance;
+    const isRightSwipe = distance < -minSwipeDistance;
+
+    if (isLeftSwipe) {
+      handleNextImage();
+    }
+    if (isRightSwipe) {
+      handlePreviousImage();
+    }
+  };
+
+  const onCompletedTouchEnd = () => {
+    if (!touchStart || !touchEnd) return;
+
+    const distance = touchStart - touchEnd;
+    const isLeftSwipe = distance > minSwipeDistance;
+    const isRightSwipe = distance < -minSwipeDistance;
+
+    if (isLeftSwipe) {
+      handleNextCompletedImage();
+    }
+    if (isRightSwipe) {
+      handlePreviousCompletedImage();
+    }
+  };
+
+  // Handle slider change - scroll to show selected image
+  const handleImageSliderChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const index = Number(e.target.value);
+    setCurrentImageIndex(index);
+
+    console.log('[Slider] Changed to index:', index);
+
+    // Use setTimeout to ensure DOM is ready
+    setTimeout(() => {
+      if (scrollContainerRef.current) {
+        const cardWidth = 112 + 12; // w-28 (112px) + gap-3 (12px)
+        const containerWidth = scrollContainerRef.current.clientWidth;
+        const scrollTo = (index * cardWidth) - (containerWidth / 2) + (112 / 2); // Center the card
+        const finalScroll = Math.max(0, scrollTo);
+
+        console.log('[Slider] Scrolling to:', finalScroll, 'for index:', index, 'cardWidth:', cardWidth);
+        scrollContainerRef.current.scrollLeft = finalScroll;
+
+        // Verify scroll happened
+        setTimeout(() => {
+          console.log('[Slider] Current scroll position:', scrollContainerRef.current?.scrollLeft);
+        }, 100);
+      } else {
+        console.log('[Slider] ERROR: scrollContainerRef is null!');
+      }
+    }, 0);
+  };
+
+  // Update currentImageIndex when scrolling
+  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const container = e.currentTarget;
+    const cardWidth = 112 + 12; // w-28 (112px) + gap-3 (12px)
+    const index = Math.round(container.scrollLeft / cardWidth);
+    setCurrentImageIndex(index);
+  };
+
+  // Priority preload for pending images - load current first, then surrounding
+  useEffect(() => {
+    if (selectedImageIndex === null || !data?.pending.length) return;
+
+    const preloadRange = 2; // Preload 2 images before and after
+
+    // Priority 1: Load current image immediately
+    const currentFile = data.pending[selectedImageIndex];
+    if (currentFile) {
+      const currentImg = new Image();
+      currentImg.src = `/api/images/${id}/pending/${currentFile.name}?v=${currentFile.createdAt}`;
+
+      // Priority 2: Preload surrounding images after a short delay
+      setTimeout(() => {
+        const imagesToPreload: number[] = [];
+
+        // Add surrounding images
+        for (let i = 1; i <= preloadRange; i++) {
+          // Next images
+          const nextIndex = (selectedImageIndex + i) % data.pending.length;
+          imagesToPreload.push(nextIndex);
+
+          // Previous images
+          const prevIndex = (selectedImageIndex - i + data.pending.length) % data.pending.length;
+          imagesToPreload.push(prevIndex);
+        }
+
+        // Preload surrounding images
+        imagesToPreload.forEach((index) => {
+          const file = data.pending[index];
+          if (file) {
+            const img = new Image();
+            img.src = `/api/images/${id}/pending/${file.name}?v=${file.createdAt}`;
+          }
+        });
+      }, 100); // Delay 100ms to prioritize current image
+    }
+  }, [selectedImageIndex, data?.pending, id]);
+
+  // Priority preload for completed folder images - load current first, then surrounding
+  useEffect(() => {
+    if (selectedCompletedImageIndex === null || !completedFolderImages.length || !selectedCompletedFolder) return;
+
+    const preloadRange = 2; // Preload 2 images before and after
+
+    // Priority 1: Load current image immediately
+    const currentFilename = completedFolderImages[selectedCompletedImageIndex];
+    if (currentFilename) {
+      const currentImg = new Image();
+      currentImg.src = `/api/images/${id}/completed/${selectedCompletedFolder}/${currentFilename}?thumbnail=true`;
+
+      // Priority 2: Preload surrounding images after a short delay
+      setTimeout(() => {
+        const imagesToPreload: number[] = [];
+
+        // Add surrounding images
+        for (let i = 1; i <= preloadRange; i++) {
+          // Next images
+          const nextIndex = (selectedCompletedImageIndex + i) % completedFolderImages.length;
+          imagesToPreload.push(nextIndex);
+
+          // Previous images
+          const prevIndex = (selectedCompletedImageIndex - i + completedFolderImages.length) % completedFolderImages.length;
+          imagesToPreload.push(prevIndex);
+        }
+
+        // Preload surrounding images
+        imagesToPreload.forEach((index) => {
+          const filename = completedFolderImages[index];
+          if (filename) {
+            const img = new Image();
+            img.src = `/api/images/${id}/completed/${selectedCompletedFolder}/${filename}?thumbnail=true`;
+          }
+        });
+      }, 100); // Delay 100ms to prioritize current image
+    }
+  }, [selectedCompletedImageIndex, completedFolderImages, selectedCompletedFolder, id]);
+
   // Check scanner status via proxy
   useEffect(() => {
+    if (!scannerEndpoint) return;
+
     const checkStatus = async () => {
       try {
-        const res = await fetch("/api/scanner/health");
+        const res = await fetch(`${scannerEndpoint}/health`);
         if (res.ok) {
           const data: ScannerStatus = await res.json();
           setScannerInfo(data);
@@ -202,7 +368,7 @@ export default function ClientOnePage() {
     checkStatus();
     const interval = setInterval(checkStatus, 2000);
     return () => clearInterval(interval);
-  }, []);
+  }, [scannerEndpoint]);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -245,7 +411,7 @@ export default function ClientOnePage() {
     }
 
     try {
-      const res = await fetch("/api/scanner/scan", {
+      const res = await fetch(`${scannerEndpoint}/scan`, {
         method: "POST",
       });
       if (!res.ok) {
@@ -289,7 +455,7 @@ export default function ClientOnePage() {
     console.log("Request Data:", requestData);
 
     try {
-      const res = await fetch("/api/client/1", {
+      const res = await fetch(`/api/client/${id}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(requestData),
@@ -343,7 +509,7 @@ export default function ClientOnePage() {
 
     setClearing(true);
     try {
-      const res = await fetch("/api/client/1", {
+      const res = await fetch(`/api/client/${id}`, {
         method: "DELETE",
       });
 
@@ -393,8 +559,8 @@ export default function ClientOnePage() {
       const formData = new FormData();
       formData.append("pdf", file);
 
-      console.log("Sending request to /api/client/1/upload-pdf");
-      const res = await fetch("/api/client/1/upload-pdf", {
+      console.log("Sending request to /api/client/${id}/upload-pdf");
+      const res = await fetch(`/api/client/${id}/upload-pdf`, {
         method: "POST",
         body: formData,
       });
@@ -516,7 +682,7 @@ export default function ClientOnePage() {
       formData.append("pdf", file);
       formData.append("groupName", groupName);
 
-      const res = await fetch("/api/client/1/upload-pdf-to-group", {
+      const res = await fetch(`/api/client/${id}/upload-pdf-to-group`, {
         method: "POST",
         body: formData,
       });
@@ -614,7 +780,7 @@ export default function ClientOnePage() {
     setSelectedCompletedFolder(folderName);
     try {
       // โหลดรายการไฟล์จาก API
-      const response = await fetch(`/api/client/1/completed/${encodeURIComponent(folderName)}`);
+      const response = await fetch(`/api/client/${id}/completed/${encodeURIComponent(folderName)}`);
 
       if (!response.ok) {
         throw new Error('Failed to load images');
@@ -698,7 +864,7 @@ export default function ClientOnePage() {
 
     setDeletingImage(true);
     try {
-      const res = await fetch(`/api/client/1/delete-image?filename=${encodeURIComponent(imageToDelete.name)}`, {
+      const res = await fetch(`/api/client/${id}/delete-image?filename=${encodeURIComponent(imageToDelete.name)}`, {
         method: "DELETE",
       });
 
@@ -730,7 +896,7 @@ export default function ClientOnePage() {
       <header className="bg-white shadow-sm sticky top-0 z-10">
         <div className="px-4 py-4 flex justify-between items-center">
           <div>
-            <h1 className="text-xl font-bold text-gray-800">Client 1</h1>
+            <h1 className="text-xl font-bold text-gray-800">Client ${id}</h1>
             <p className="text-sm text-gray-500">จัดการ Roll</p>
           </div>
           <div className="flex items-center gap-3">
@@ -934,8 +1100,9 @@ export default function ClientOnePage() {
                   ref={scrollContainerRef}
                   className="flex gap-3 overflow-x-auto pb-4 px-1 snap-x snap-mandatory scrollbar-hide"
                   style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+                  onScroll={handleScroll}
                 >
-                  {data.pending.slice(0, showAllImages ? undefined : 6).map((file, index) => {
+                  {data.pending.map((file, index) => {
                     const displayNumber = index + 1;
                     const originalIndex = index;
                     return (
@@ -944,12 +1111,16 @@ export default function ClientOnePage() {
                         className="flex-shrink-0 snap-start"
                         onClick={() => setSelectedImageIndex(originalIndex)}
                       >
-                        <div className="w-28 bg-white rounded-xl shadow-md overflow-hidden border border-gray-100 transition-all duration-200 active:scale-95 hover:shadow-lg cursor-pointer">
+                        <div className={`w-28 bg-white rounded-xl shadow-md overflow-hidden transition-all duration-200 active:scale-95 hover:shadow-lg cursor-pointer ${
+                          currentImageIndex === originalIndex
+                            ? 'border-4 border-purple-500 ring-2 ring-purple-200'
+                            : 'border border-gray-100'
+                        }`}>
                           {/* Document Preview */}
                           <div className="aspect-[3/4] bg-gradient-to-b from-gray-50 to-gray-100 relative overflow-hidden">
                             <img
-                              key={`${file.name}-${file.createdAt}-${cacheVersion}`}
-                              src={`/uploads/1/pending/${file.name}?v=${file.createdAt}&t=${cacheVersion}`}
+                              key={`${file.name}-${file.createdAt}`}
+                              src={`/api/images/${id}/pending/${file.name}?thumbnail=true&v=${file.createdAt}`}
                               alt={file.name}
                               className="w-full h-full object-cover"
                               loading="lazy"
@@ -969,58 +1140,35 @@ export default function ClientOnePage() {
                       </div>
                     );
                   })}
-
-                  {/* View More Card */}
-                  {!showAllImages && data.pending.length > 6 && (
-                    <div
-                      className="flex-shrink-0 snap-start"
-                      onClick={() => setShowAllImages(true)}
-                    >
-                      <div className="w-28 bg-gradient-to-br from-purple-50 to-purple-100 rounded-xl shadow-md overflow-hidden border border-purple-200 transition-all duration-200 active:scale-95 hover:shadow-lg cursor-pointer">
-                        <div className="aspect-[3/4] flex flex-col items-center justify-center p-3">
-                          <div className="w-10 h-10 bg-purple-200 rounded-full flex items-center justify-center mb-2">
-                            <span className="text-purple-700 font-bold text-sm">+{data.pending.length - 6}</span>
-                          </div>
-                          <p className="text-purple-700 text-xs font-medium text-center">ดูทั้งหมด</p>
-                        </div>
-                        <div className="px-2 py-2 bg-purple-100/50 border-t border-purple-200">
-                          <p className="text-[10px] text-purple-600 text-center font-medium">
-                            {data.pending.length} ไฟล์
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  )}
                 </div>
 
-                {/* Scroll Indicator Dots */}
+                {/* Image Slider - เลือกหน้ารูป */}
                 {data.pending.length > 3 && (
-                  <div className="flex justify-center gap-1.5 mt-2">
-                    {Array.from({ length: Math.min(Math.ceil((showAllImages ? data.pending.length : Math.min(data.pending.length, 6)) / 3), 5) }).map((_, i) => (
-                      <div
-                        key={i}
-                        className={`w-1.5 h-1.5 rounded-full transition-colors ${i === 0 ? 'bg-purple-500' : 'bg-gray-300'}`}
+                  <div className="mt-3 px-2">
+                    <div className="flex items-center gap-3">
+                      <span className="text-xs text-gray-500 font-medium">หน้า {currentImageIndex + 1}</span>
+                      <input
+                        type="range"
+                        min="0"
+                        max={data.pending.length - 1}
+                        value={currentImageIndex}
+                        onChange={handleImageSliderChange}
+                        className="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-purple-600 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:cursor-pointer [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:bg-purple-600 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:cursor-pointer [&::-moz-range-thumb]:border-0"
                       />
-                    ))}
+                      <span className="text-xs text-gray-500 font-medium">{data.pending.length} ไฟล์</span>
+                    </div>
                   </div>
                 )}
               </div>
-
-              {/* Collapse Button */}
-              {showAllImages && data.pending.length > 6 && (
-                <button
-                  onClick={() => setShowAllImages(false)}
-                  className="mt-3 w-full py-2 text-sm text-purple-600 font-medium hover:bg-purple-50 rounded-lg transition-colors"
-                >
-                  ย่อรูปภาพ
-                </button>
-              )}
 
               {/* Image Preview Modal */}
               {selectedImageIndex !== null && data.pending[selectedImageIndex] && (
                 <div
                   className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4"
                   onClick={() => setSelectedImageIndex(null)}
+                  onTouchStart={onTouchStart}
+                  onTouchMove={onTouchMove}
+                  onTouchEnd={onTouchEnd}
                 >
                   {/* Close Button */}
                   <button
@@ -1081,11 +1229,10 @@ export default function ClientOnePage() {
 
                   {/* Image */}
                   <img
-                    key={`${data.pending[selectedImageIndex].name}-${data.pending[selectedImageIndex].createdAt}-${cacheVersion}`}
-                    src={`/uploads/1/pending/${data.pending[selectedImageIndex].name}?v=${data.pending[selectedImageIndex].createdAt}&t=${cacheVersion}`}
+                    key={`${data.pending[selectedImageIndex].name}-${data.pending[selectedImageIndex].createdAt}`}
+                    src={`/api/images/${id}/pending/${data.pending[selectedImageIndex].name}?v=${data.pending[selectedImageIndex].createdAt}`}
                     alt={data.pending[selectedImageIndex].name}
                     className="max-w-full max-h-[85vh] object-contain rounded-lg shadow-2xl"
-                    loading="lazy"
                     onClick={(e) => e.stopPropagation()}
                   />
 
@@ -1282,23 +1429,26 @@ export default function ClientOnePage() {
                   className="bg-white rounded-lg p-4 shadow-sm border border-gray-200"
                 >
                   <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
-                      <svg
-                        className="w-6 h-6 text-green-600"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
-                        />
-                      </svg>
+                    {/* Thumbnail Preview */}
+                    <div className="w-16 h-20 bg-gray-100 rounded-lg overflow-hidden flex-shrink-0 border border-gray-200">
+                      <img
+                        src={`/api/images/${id}/completed/${folder.name}/1.jpeg?thumbnail=true`}
+                        alt={folder.name}
+                        className="w-full h-full object-cover"
+                        loading="lazy"
+                        onError={(e) => {
+                          // Fallback to folder icon if no image
+                          e.currentTarget.style.display = 'none';
+                          e.currentTarget.parentElement!.innerHTML = `
+                            <svg class="w-8 h-8 text-green-600 m-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                            </svg>
+                          `;
+                        }}
+                      />
                     </div>
-                    <div className="flex-1">
-                      <p className="font-semibold text-gray-800">{folder.name}</p>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-semibold text-gray-800 truncate">{folder.name}</p>
                       <p className="text-xs text-gray-500">{folder.fileCount} ไฟล์</p>
                     </div>
                     <button
@@ -1554,6 +1704,9 @@ export default function ClientOnePage() {
         <div
           className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4"
           onClick={closeCompletedImageModal}
+          onTouchStart={onTouchStart}
+          onTouchMove={onTouchMove}
+          onTouchEnd={onCompletedTouchEnd}
         >
           {/* Close Button */}
           <button
@@ -1608,11 +1761,10 @@ export default function ClientOnePage() {
               </div>
             ) : (
               <img
-                key={`${selectedCompletedFolder}-${completedFolderImages[selectedCompletedImageIndex]}-${cacheVersion}`}
-                src={`/uploads/1/completed/${selectedCompletedFolder}/${completedFolderImages[selectedCompletedImageIndex]}?v=${cacheVersion}`}
+                key={`${selectedCompletedFolder}-${completedFolderImages[selectedCompletedImageIndex]}`}
+                src={`/api/images/${id}/completed/${selectedCompletedFolder}/${completedFolderImages[selectedCompletedImageIndex]}?thumbnail=true`}
                 alt={completedFolderImages[selectedCompletedImageIndex]}
                 className="max-w-full max-h-[85vh] object-contain rounded-lg shadow-2xl"
-                    loading="lazy"
                 style={{ display: imageLoading ? 'none' : 'block' }}
                 onClick={(e) => e.stopPropagation()}
                 onLoadStart={() => setImageLoading(true)}

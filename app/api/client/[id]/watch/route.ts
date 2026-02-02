@@ -2,8 +2,10 @@ import { NextRequest } from "next/server";
 import path from "path";
 import fs from "fs/promises";
 import chokidar from "chokidar";
+import sharp from "sharp";
 
-const UPLOADS_DIR = path.join(process.cwd(), "public/uploads");
+const UPLOADS_DIR = path.join(process.cwd(), "uploads");
+const THUMBNAILS_DIR = path.join(process.cwd(), "uploads", ".thumbnails");
 
 function formatDateTime(date: Date): string {
   const base = date.toLocaleString("th-TH", {
@@ -17,6 +19,28 @@ function formatDateTime(date: Date): string {
   });
   const ms = date.getMilliseconds().toString().padStart(3, "0");
   return `${base}.${ms}`;
+}
+
+// Helper function to create thumbnail
+async function createThumbnail(sourceImagePath: string, thumbnailPath: string) {
+  try {
+    const imageBuffer = await fs.readFile(sourceImagePath);
+    const thumbnailBuffer = await sharp(imageBuffer)
+      .resize(400, 600, {
+        fit: "inside",
+        withoutEnlargement: true,
+      })
+      .jpeg({ quality: 80 })
+      .toBuffer();
+
+    await fs.mkdir(path.dirname(thumbnailPath), { recursive: true });
+    await fs.writeFile(thumbnailPath, thumbnailBuffer);
+    console.log(`[Watch] ✅ Created thumbnail: ${path.basename(thumbnailPath)}`);
+    return true;
+  } catch (error) {
+    console.error(`[Watch] ❌ Error creating thumbnail:`, error);
+    return false;
+  }
 }
 
 interface FileMetadata {
@@ -147,7 +171,7 @@ export async function GET(
       // ใช้ polling แทน chokidar เพื่อหลีกเลี่ยง spawn EBADF error
       console.log("[Watch] Using polling mode (every 2 seconds)");
 
-      let lastPendingHash = "";
+      let lastPendingFiles: string[] = [];
       let lastCompletedHash = "";
 
       const pollingInterval = setInterval(async () => {
@@ -155,11 +179,34 @@ export async function GET(
           const pending = await getPendingFiles(id);
           const completed = await getCompletedFolders(id);
 
-          const pendingHash = JSON.stringify(pending.filter(f => f !== null).map(f => f.name).sort());
+          const currentPendingFiles = pending.filter(f => f !== null).map(f => f.name).sort();
           const completedHash = JSON.stringify(completed.filter(f => f !== null).map(f => f.name).sort());
 
-          if (pendingHash !== lastPendingHash || completedHash !== lastCompletedHash) {
-            lastPendingHash = pendingHash;
+          // Check for new files in pending
+          const newFiles = currentPendingFiles.filter(file => !lastPendingFiles.includes(file));
+
+          if (newFiles.length > 0) {
+            console.log(`[Watch] 🆕 Detected ${newFiles.length} new files in client ${id}`);
+
+            // Create thumbnails for new files
+            for (const fileName of newFiles) {
+              const sourcePath = path.join(UPLOADS_DIR, id, "pending", fileName);
+              const thumbnailPath = path.join(THUMBNAILS_DIR, id, "pending", `thumb_${fileName}`);
+
+              // Check if thumbnail already exists
+              try {
+                await fs.access(thumbnailPath);
+                console.log(`[Watch] ⏭️  Thumbnail exists: ${fileName}`);
+              } catch {
+                // Create thumbnail
+                await createThumbnail(sourcePath, thumbnailPath);
+              }
+            }
+          }
+
+          const pendingHash = JSON.stringify(currentPendingFiles);
+          if (pendingHash !== JSON.stringify(lastPendingFiles) || completedHash !== lastCompletedHash) {
+            lastPendingFiles = currentPendingFiles;
             lastCompletedHash = completedHash;
             await sendData();
           }
