@@ -823,7 +823,8 @@ export default function ClientPage() {
     setRestarting(true);
     try {
       const hostname = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
-      const res = await fetch(`http://${hostname}:9009/clients/client01/restart`, {
+      const clientId = id.padStart(2, '0');
+      const res = await fetch(`http://${hostname}:9009/clients/client${clientId}/restart`, {
         method: "POST",
       });
 
