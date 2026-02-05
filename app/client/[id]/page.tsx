@@ -3,6 +3,19 @@
 import { useState, useEffect, useRef } from "react";
 import { useParams } from "next/navigation";
 
+// Calculate sheets from pages using 30% rule
+// 30% first pages: 2 pages = 1 sheet (double-sided), odd page = 1 sheet
+// 70% remaining: 1 page = 1 sheet (single-sided)
+function calculateSheets(totalPages: number): number {
+  if (totalPages === 0) return 0;
+
+  const first30Count = Math.ceil(totalPages * 0.3);
+  const first30Sheets = Math.ceil(first30Count / 2);
+  const remaining70 = totalPages - first30Count;
+
+  return first30Sheets + remaining70;
+}
+
 // รายชื่อเขตทั้งหมดในกรุงเทพมหานคร
 const BANGKOK_DISTRICTS = [
   "พระนคร",
@@ -1005,6 +1018,37 @@ export default function ClientPage() {
             </div>
           )}
         </div>
+
+        {/* Summary Stats Card */}
+        {data && (
+          <div className="mb-4 bg-gradient-to-br from-green-50 to-emerald-50 border border-green-200 rounded-xl shadow-sm p-4">
+            <h3 className="text-sm font-semibold text-green-800 mb-3 flex items-center gap-2">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+              </svg>
+              สรุปผลงาน
+            </h3>
+            <div className="grid grid-cols-2 gap-3">
+              {/* Total Folders */}
+              <div className="bg-white rounded-lg p-3 text-center shadow-sm">
+                <p className="text-green-600 text-xs font-medium mb-1">เล่ม</p>
+                <p className="text-green-900 text-3xl font-bold">{data.completed.length}</p>
+                <p className="text-green-600 text-[10px] mt-1">folders</p>
+              </div>
+
+              {/* Total Sheets */}
+              <div className="bg-white rounded-lg p-3 text-center shadow-sm">
+                <p className="text-green-600 text-xs font-medium mb-1">แผ่น (โดยประมาณ)</p>
+                <p className="text-green-900 text-3xl font-bold">
+                  {calculateSheets(data.completed.reduce((sum, folder) => sum + folder.fileCount, 0))}
+                </p>
+                <p className="text-green-600 text-[10px] mt-1">
+                  ({data.completed.reduce((sum, folder) => sum + folder.fileCount, 0)} หน้า)
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Big Scan Button */}
         <div className="mb-6">
