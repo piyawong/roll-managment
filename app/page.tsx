@@ -40,6 +40,9 @@ export default function Home() {
   const [startTimeInput, setStartTimeInput] = useState("");
   const [hourInput, setHourInput] = useState("");
   const [minuteInput, setMinuteInput] = useState("");
+  const [syncingThumbnails, setSyncingThumbnails] = useState(false);
+  const [showSyncModal, setShowSyncModal] = useState(false);
+  const [syncResult, setSyncResult] = useState<any>(null);
 
   // Fetch all clients data
   const fetchClientsData = async () => {
@@ -304,6 +307,40 @@ export default function Home() {
     });
   };
 
+  // Sync Thumbnails
+  const handleSyncThumbnails = async () => {
+    if (!confirm("ต้องการลบ thumbnail ที่ไม่มีไฟล์ต้นฉบับ?\n\nการดำเนินการนี้จะลบ thumbnail ที่ไม่ตรงกับไฟล์จริงทั้งหมด")) {
+      return;
+    }
+
+    setSyncingThumbnails(true);
+    setSyncResult(null);
+
+    try {
+      const response = await fetch("/api/sync-thumbnails", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({}), // ไม่ระบุ clientId = sync ทั้งหมด
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        setSyncResult(data);
+        setShowSyncModal(true);
+      } else {
+        alert(`เกิดข้อผิดพลาด: ${data.error}`);
+      }
+    } catch (error) {
+      console.error("Error syncing thumbnails:", error);
+      alert("เกิดข้อผิดพลาดในการ sync thumbnails");
+    } finally {
+      setSyncingThumbnails(false);
+    }
+  };
+
   // Calculate totals
   const totalPending = clientsData.reduce((sum, client) => sum + client.pendingCount, 0);
   const totalPages = clientsData.reduce((sum, client) => sum + client.completedFilesCount, 0);
@@ -401,30 +438,56 @@ export default function Home() {
               <h1 className="text-3xl font-bold text-gray-900">Roll Management Dashboard</h1>
               <p className="text-sm text-gray-500 mt-1">ระบบจัดการม้วนฟิล์ม - 10 เครื่อง</p>
             </div>
-            <button
-              onClick={fetchClientsData}
-              disabled={refreshing}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-all duration-200 ${
-                refreshing
-                  ? "bg-gray-200 text-gray-400 cursor-wait"
-                  : "bg-blue-600 text-white hover:bg-blue-700 active:bg-blue-800 shadow-md hover:shadow-lg"
-              }`}
-            >
-              <svg
-                className={`w-5 h-5 ${refreshing ? "animate-spin" : ""}`}
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
+            <div className="flex gap-2">
+              <button
+                onClick={handleSyncThumbnails}
+                disabled={syncingThumbnails}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-all duration-200 ${
+                  syncingThumbnails
+                    ? "bg-gray-200 text-gray-400 cursor-wait"
+                    : "bg-purple-600 text-white hover:bg-purple-700 active:bg-purple-800 shadow-md hover:shadow-lg"
+                }`}
               >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-                />
-              </svg>
-              <span>{refreshing ? "กำลังโหลด..." : "Refresh"}</span>
-            </button>
+                <svg
+                  className={`w-5 h-5 ${syncingThumbnails ? "animate-spin" : ""}`}
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+                  />
+                </svg>
+                <span>{syncingThumbnails ? "กำลัง Sync..." : "Sync Thumbnails"}</span>
+              </button>
+              <button
+                onClick={fetchClientsData}
+                disabled={refreshing}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-all duration-200 ${
+                  refreshing
+                    ? "bg-gray-200 text-gray-400 cursor-wait"
+                    : "bg-blue-600 text-white hover:bg-blue-700 active:bg-blue-800 shadow-md hover:shadow-lg"
+                }`}
+              >
+                <svg
+                  className={`w-5 h-5 ${refreshing ? "animate-spin" : ""}`}
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                  />
+                </svg>
+                <span>{refreshing ? "กำลังโหลด..." : "Refresh"}</span>
+              </button>
+            </div>
           </div>
 
           {/* Summary Stats */}
@@ -638,6 +701,133 @@ export default function Home() {
           </div>
         )}
       </main>
+
+      {/* Sync Result Modal */}
+      {showSyncModal && syncResult && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl p-6 max-h-[80vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-xl font-bold text-gray-800">
+                ผลการ Sync Thumbnails
+              </h3>
+              <button
+                onClick={() => setShowSyncModal(false)}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Summary Stats */}
+            <div className="grid grid-cols-3 gap-3 mb-6">
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-center">
+                <p className="text-blue-600 text-xs font-medium mb-1">สแกนทั้งหมด</p>
+                <p className="text-blue-900 text-2xl font-bold">{syncResult.stats.totalScanned}</p>
+              </div>
+              <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-center">
+                <p className="text-red-600 text-xs font-medium mb-1">ลบแล้ว</p>
+                <p className="text-red-900 text-2xl font-bold">{syncResult.stats.totalDeleted}</p>
+              </div>
+              <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-center">
+                <p className="text-green-600 text-xs font-medium mb-1">เก็บไว้</p>
+                <p className="text-green-900 text-2xl font-bold">{syncResult.stats.totalKept}</p>
+              </div>
+            </div>
+
+            {syncResult.emptyDirectoriesDeleted > 0 && (
+              <div className="bg-purple-50 border border-purple-200 rounded-lg p-3 mb-4">
+                <p className="text-purple-700 text-sm">
+                  ลบโฟลเดอร์ว่าง: <span className="font-bold">{syncResult.emptyDirectoriesDeleted}</span> โฟลเดอร์
+                </p>
+              </div>
+            )}
+
+            {/* Detailed Results */}
+            {syncResult.stats.results.length > 0 && (
+              <div>
+                <h4 className="text-sm font-semibold text-gray-700 mb-3">รายละเอียดแต่ละ Client:</h4>
+                <div className="space-y-2 max-h-96 overflow-y-auto">
+                  {syncResult.stats.results
+                    .filter((result: any) => result.deleted.length > 0 || result.kept.length > 0)
+                    .map((result: any, index: number) => (
+                      <div
+                        key={index}
+                        className="bg-gray-50 border border-gray-200 rounded-lg p-3"
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <h5 className="font-semibold text-gray-800">
+                            Client {result.client} - {result.type}
+                          </h5>
+                          <div className="flex gap-2 text-xs">
+                            {result.deleted.length > 0 && (
+                              <span className="bg-red-100 text-red-700 px-2 py-1 rounded">
+                                ลบ {result.deleted.length}
+                              </span>
+                            )}
+                            {result.kept.length > 0 && (
+                              <span className="bg-green-100 text-green-700 px-2 py-1 rounded">
+                                เก็บ {result.kept.length}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {result.deleted.length > 0 && (
+                          <div className="mb-2">
+                            <p className="text-xs font-medium text-red-600 mb-1">ไฟล์ที่ลบ:</p>
+                            <div className="bg-white rounded border border-red-200 p-2 max-h-32 overflow-y-auto">
+                              {result.deleted.slice(0, 10).map((file: string, i: number) => (
+                                <p key={i} className="text-xs text-gray-600 font-mono">
+                                  {file}
+                                </p>
+                              ))}
+                              {result.deleted.length > 10 && (
+                                <p className="text-xs text-gray-500 italic mt-1">
+                                  ... และอีก {result.deleted.length - 10} ไฟล์
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        {result.errors.length > 0 && (
+                          <div>
+                            <p className="text-xs font-medium text-orange-600 mb-1">
+                              ข้อผิดพลาด ({result.errors.length}):
+                            </p>
+                            <div className="bg-orange-50 rounded border border-orange-200 p-2 max-h-20 overflow-y-auto">
+                              {result.errors.slice(0, 3).map((error: string, i: number) => (
+                                <p key={i} className="text-xs text-orange-700">
+                                  {error}
+                                </p>
+                              ))}
+                              {result.errors.length > 3 && (
+                                <p className="text-xs text-orange-600 italic mt-1">
+                                  ... และอีก {result.errors.length - 3} ข้อผิดพลาด
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                </div>
+              </div>
+            )}
+
+            <div className="mt-6">
+              <button
+                onClick={() => setShowSyncModal(false)}
+                className="w-full bg-gradient-to-r from-purple-600 to-indigo-600 text-white py-3 rounded-xl font-semibold hover:from-purple-700 hover:to-indigo-700 active:from-purple-800 active:to-indigo-800 transition-colors shadow-md"
+              >
+                ปิด
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Time Input Modal */}
       {showTimeModal && (
