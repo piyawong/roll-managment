@@ -106,6 +106,11 @@ interface ScannerStatus {
   device: string;
 }
 
+interface ClientTimer {
+  startTime: number;
+  startFilesCount: number;
+}
+
 export default function ClientPage() {
   const params = useParams();
   const id = params?.id as string;
@@ -163,6 +168,33 @@ export default function ClientPage() {
   const [touchStart, setTouchStart] = useState<number | null>(null);
   const [touchEnd, setTouchEnd] = useState<number | null>(null);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
+  const [clientTimer, setClientTimer] = useState<ClientTimer | null>(null);
+  const [currentTime, setCurrentTime] = useState(Date.now());
+
+  // Load client timer from localStorage
+  useEffect(() => {
+    if (!id) return;
+    const savedTimers = localStorage.getItem('clientTimers');
+    if (savedTimers) {
+      try {
+        const timers = JSON.parse(savedTimers);
+        if (timers[id]) {
+          setClientTimer(timers[id]);
+        }
+      } catch (error) {
+        console.error('Failed to parse client timers:', error);
+      }
+    }
+  }, [id]);
+
+  // Update current time every second
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setCurrentTime(Date.now());
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     if (!id) return;
@@ -904,6 +936,87 @@ export default function ClientPage() {
     }
   };
 
+  // Get tier color based on sheetsPerHour
+  const getTierColor = (sheetsPerHour: number) => {
+    if (sheetsPerHour >= 400) {
+      return {
+        gradient: 'from-pink-500 via-purple-500 to-indigo-500',
+        text: 'text-white',
+        glow: 'shadow-2xl ring-4 ring-purple-300',
+        label: '🌈'
+      };
+    } else if (sheetsPerHour >= 300) {
+      return {
+        gradient: 'from-emerald-500 to-teal-500',
+        text: 'text-white',
+        glow: 'shadow-xl ring-2 ring-emerald-300',
+        label: '👑'
+      };
+    } else if (sheetsPerHour >= 200) {
+      return {
+        gradient: 'from-yellow-300 to-yellow-500',
+        text: 'text-yellow-900',
+        glow: 'shadow-lg',
+        label: '⚡'
+      };
+    } else {
+      return {
+        gradient: 'from-red-400 to-red-600',
+        text: 'text-white',
+        glow: 'shadow-md',
+        label: '🔥'
+      };
+    }
+  };
+
+  // Calculate client stats from timer
+  const getClientStats = () => {
+    if (!clientTimer || !data) return null;
+
+    // Calculate time difference but cap at midnight
+    const startDate = new Date(clientTimer.startTime);
+    const now = new Date(currentTime);
+
+    // Check if we crossed midnight (different days)
+    const startDay = new Date(startDate).setHours(0, 0, 0, 0);
+    const nowDay = new Date(now).setHours(0, 0, 0, 0);
+
+    let endTime = now;
+    if (nowDay > startDay) {
+      // Crossed midnight - cap at end of start day (midnight)
+      const midnight = new Date(startDate);
+      midnight.setHours(23, 59, 59, 999);
+      endTime = midnight;
+    }
+
+    const elapsedMs = endTime.getTime() - clientTimer.startTime;
+    const elapsedHours = Math.floor(elapsedMs / (1000 * 60 * 60));
+    const elapsedMinutes = Math.floor((elapsedMs % (1000 * 60 * 60)) / (1000 * 60));
+
+    // Calculate total completed files
+    const completedFilesCount = data.completed.reduce((sum, folder) => sum + folder.fileCount, 0);
+
+    // Calculate sheets using total (not delta)
+    const currentSheets = calculateSheets(completedFilesCount);
+
+    const totalHours = elapsedMs / (1000 * 60 * 60);
+    const sheetsPerHour = totalHours > 0 ? Math.round((currentSheets / totalHours) * 10) / 10 : 0;
+
+    const startTimeStr = startDate.toLocaleTimeString('th-TH', {
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+
+    return {
+      elapsedHours,
+      elapsedMinutes,
+      sheetsDone: currentSheets, // Show total sheets instead of delta
+      sheetsPerHour,
+      startTimeStr,
+      tier: getTierColor(sheetsPerHour)
+    };
+  };
+
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
       {/* Header */}
@@ -1020,35 +1133,70 @@ export default function ClientPage() {
         </div>
 
         {/* Summary Stats Card */}
-        {data && (
-          <div className="mb-4 bg-gradient-to-br from-green-50 to-emerald-50 border border-green-200 rounded-xl shadow-sm p-4">
-            <h3 className="text-sm font-semibold text-green-800 mb-3 flex items-center gap-2">
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-              </svg>
-              สรุปผลงาน
-            </h3>
-            <div className="grid grid-cols-2 gap-3">
-              {/* Total Folders */}
-              <div className="bg-white rounded-lg p-3 text-center shadow-sm">
-                <p className="text-green-600 text-xs font-medium mb-1">เล่ม</p>
-                <p className="text-green-900 text-3xl font-bold">{data.completed.length}</p>
-                <p className="text-green-600 text-[10px] mt-1">folders</p>
-              </div>
+        {data && (() => {
+          const stats = getClientStats();
+          return (
+            <div className="mb-4 bg-gradient-to-br from-green-50 to-emerald-50 border border-green-200 rounded-xl shadow-sm p-4">
+              <h3 className="text-sm font-semibold text-green-800 mb-3 flex items-center gap-2">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                </svg>
+                สรุปผลงาน
+              </h3>
 
-              {/* Total Sheets */}
-              <div className="bg-white rounded-lg p-3 text-center shadow-sm">
-                <p className="text-green-600 text-xs font-medium mb-1">แผ่น (โดยประมาณ)</p>
-                <p className="text-green-900 text-3xl font-bold">
-                  {calculateSheets(data.completed.reduce((sum, folder) => sum + folder.fileCount, 0))}
-                </p>
-                <p className="text-green-600 text-[10px] mt-1">
-                  ({data.completed.reduce((sum, folder) => sum + folder.fileCount, 0)} หน้า)
-                </p>
+              {/* Timer Info - Focus on Rate */}
+              {stats && stats.sheetsDone > 0 && (
+                <div className={`mb-3 bg-gradient-to-br ${stats.tier.gradient} ${stats.tier.glow} rounded-xl p-3 transition-all duration-500`}>
+                  {/* Tier Emoji */}
+                  <div className="text-center mb-1">
+                    <span className="text-2xl">
+                      {stats.tier.label}
+                    </span>
+                  </div>
+
+                  {/* Rate - Most Prominent */}
+                  <div className={`text-center ${stats.tier.text}`}>
+                    <p className="opacity-90 text-xs font-medium mb-1">อัตรา</p>
+                    <div className="text-4xl font-bold mb-1">
+                      {stats.sheetsPerHour}
+                    </div>
+                    <p className="opacity-90 text-sm font-semibold mb-2">แผ่น/ชม.</p>
+
+                    {/* Start Time */}
+                    <div className={`pt-2 border-t ${stats.tier.text === 'text-white' ? 'border-white/20' : 'border-black/20'}`}>
+                      <p className="opacity-80 text-[10px] flex items-center justify-center gap-1">
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        เริ่มงานเมื่อ {stats.startTimeStr} • ทำงานมา {stats.elapsedHours}:{stats.elapsedMinutes.toString().padStart(2, '0')} ชม.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-3">
+                {/* Total Folders */}
+                <div className="bg-white rounded-lg p-3 text-center shadow-sm">
+                  <p className="text-green-600 text-xs font-medium mb-1">เล่ม</p>
+                  <p className="text-green-900 text-3xl font-bold">{data.completed.length}</p>
+                  <p className="text-green-600 text-[10px] mt-1">folders</p>
+                </div>
+
+                {/* Total Sheets */}
+                <div className="bg-white rounded-lg p-3 text-center shadow-sm">
+                  <p className="text-green-600 text-xs font-medium mb-1">แผ่น (โดยประมาณ)</p>
+                  <p className="text-green-900 text-3xl font-bold">
+                    {calculateSheets(data.completed.reduce((sum, folder) => sum + folder.fileCount, 0))}
+                  </p>
+                  <p className="text-green-600 text-[10px] mt-1">
+                    ({data.completed.reduce((sum, folder) => sum + folder.fileCount, 0)} หน้า)
+                  </p>
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* Big Scan Button */}
         <div className="mb-6">
@@ -1198,7 +1346,7 @@ export default function ClientPage() {
                         max={data.pending.length - 1}
                         value={currentImageIndex}
                         onChange={handleImageSliderChange}
-                        className="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-purple-600 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:cursor-pointer [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:bg-purple-600 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:cursor-pointer [&::-moz-range-thumb]:border-0"
+                        className="flex-1 h-3 bg-gray-200 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-7 [&::-webkit-slider-thumb]:h-7 [&::-webkit-slider-thumb]:bg-purple-600 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:shadow-md [&::-moz-range-thumb]:w-7 [&::-moz-range-thumb]:h-7 [&::-moz-range-thumb]:bg-purple-600 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:cursor-pointer [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:shadow-md"
                       />
                       <span className="text-xs text-gray-500 font-medium">{data.pending.length} ไฟล์</span>
                     </div>
@@ -1299,7 +1447,7 @@ export default function ClientPage() {
                             setSelectedImageIndex(Number(e.target.value));
                           }}
                           onClick={(e) => e.stopPropagation()}
-                          className="w-48 h-2 bg-white/20 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:cursor-pointer [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:bg-white [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:cursor-pointer [&::-moz-range-thumb]:border-0"
+                          className="w-48 h-3 bg-white/20 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-7 [&::-webkit-slider-thumb]:h-7 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:shadow-lg [&::-moz-range-thumb]:w-7 [&::-moz-range-thumb]:h-7 [&::-moz-range-thumb]:bg-white [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:cursor-pointer [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:shadow-lg"
                         />
                         <span className="text-white text-xs">{data.pending.length}</span>
                       </div>
@@ -1837,7 +1985,7 @@ export default function ClientPage() {
                     setSelectedCompletedImageIndex(Number(e.target.value));
                   }}
                   onClick={(e) => e.stopPropagation()}
-                  className="w-48 h-2 bg-white/20 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:cursor-pointer [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:bg-white [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:cursor-pointer [&::-moz-range-thumb]:border-0"
+                  className="w-48 h-3 bg-white/20 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-7 [&::-webkit-slider-thumb]:h-7 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:shadow-lg [&::-moz-range-thumb]:w-7 [&::-moz-range-thumb]:h-7 [&::-moz-range-thumb]:bg-white [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:cursor-pointer [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:shadow-lg"
                 />
                 <span className="text-white text-xs">{completedFolderImages.length}</span>
               </div>

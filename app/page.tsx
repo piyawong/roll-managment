@@ -38,6 +38,8 @@ export default function Home() {
   const [showTimeModal, setShowTimeModal] = useState(false);
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
   const [startTimeInput, setStartTimeInput] = useState("");
+  const [hourInput, setHourInput] = useState("");
+  const [minuteInput, setMinuteInput] = useState("");
 
   // Fetch all clients data
   const fetchClientsData = async () => {
@@ -92,6 +94,110 @@ export default function Home() {
     return () => clearInterval(interval);
   }, []);
 
+  // Background service: Send status updates for active clients
+  useEffect(() => {
+    const sendStatusUpdate = async () => {
+      // Get all active clients (those with timers)
+      const activeClientIds = Object.keys(clientTimers);
+
+      if (activeClientIds.length === 0) {
+        return; // Don't log if no active clients
+      }
+
+      console.groupCollapsed(`[Status Sync] ${new Date().toLocaleTimeString('th-TH')} - Syncing ${activeClientIds.length} client(s)`);
+
+      // Send updates for each active client
+      for (const clientId of activeClientIds) {
+        const timer = clientTimers[clientId];
+        const client = clientsData.find(c => c.clientId === clientId);
+
+        if (!client) {
+          console.warn(`Client ${clientId} not found in data`);
+          continue;
+        }
+
+        // Calculate stats using current time (not state)
+        const startDate = new Date(timer.startTime);
+        const now = new Date(); // Use actual current time, not state
+
+        // Check if we crossed midnight (different days)
+        const startDay = new Date(startDate).setHours(0, 0, 0, 0);
+        const nowDay = new Date(now).setHours(0, 0, 0, 0);
+
+        let endTime = now;
+        if (nowDay > startDay) {
+          // Crossed midnight - cap at end of start day (midnight)
+          const midnight = new Date(startDate);
+          midnight.setHours(23, 59, 59, 999);
+          endTime = midnight;
+        }
+
+        const elapsedMs = endTime.getTime() - timer.startTime;
+        const totalHours = elapsedMs / (1000 * 60 * 60);
+
+        // Calculate sheets
+        // Option: Use total sheets (not delta) for sheetsPerHour calculation
+        const currentSheets = calculateSheets(client.completedFilesCount);
+
+        // Calculate rate based on total sheets divided by elapsed time
+        const sheetsPerHour = totalHours > 0 ? Math.round((currentSheets / totalHours) * 10) / 10 : 0;
+
+        // Debug log
+        console.log(`[Client ${clientId}] Calculation:`, {
+          startFilesCount: timer.startFilesCount,
+          currentFilesCount: client.completedFilesCount,
+          currentSheets,
+          totalHours: totalHours.toFixed(2),
+          sheetsPerHour,
+          note: 'Using total sheets (not delta)'
+        });
+
+        // Prepare data
+        const statusData = {
+          machineNumber: clientId, // Send as "1", "2", "3", etc. (no leading zero)
+          sheetCount: currentSheets,
+          bookCount: client.completedFolders,
+          sheetsPerHour: sheetsPerHour
+        };
+
+        // Send to API
+        try {
+          const response = await fetch('https://ocr-flow.piyawong.com/employee-management/api/machines/status', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(statusData),
+          });
+
+          if (response.ok) {
+            const result = await response.json();
+            console.log(`✅ Client ${clientId}:`, {
+              sent: statusData,
+              received: result
+            });
+          } else {
+            console.error(`❌ Client ${clientId} - HTTP ${response.status}:`, await response.text());
+          }
+        } catch (error) {
+          console.error(`❌ Client ${clientId} - Network error:`, error);
+        }
+      }
+
+      console.groupEnd();
+    };
+
+    // Run immediately on mount if there are active clients
+    if (Object.keys(clientTimers).length > 0) {
+      sendStatusUpdate();
+    }
+
+    // Then run every 30 seconds
+    const interval = setInterval(sendStatusUpdate, 30000);
+
+    return () => clearInterval(interval);
+  }, [clientTimers, clientsData]); // Removed currentTime from dependencies
+
   // Save client timers to localStorage
   useEffect(() => {
     if (Object.keys(clientTimers).length > 0) {
@@ -106,18 +212,60 @@ export default function Home() {
 
     // Set default time to current time
     const now = new Date();
-    const hours = now.getHours().toString().padStart(2, '0');
-    const minutes = now.getMinutes().toString().padStart(2, '0');
-    setStartTimeInput(`${hours}:${minutes}`);
+    const hours = now.getHours().toString();
+    const minutes = now.getMinutes().toString();
+    setHourInput(hours);
+    setMinuteInput(minutes);
+    setStartTimeInput(`${hours.padStart(2, '0')}:${minutes.padStart(2, '0')}`);
 
     setShowTimeModal(true);
   };
 
+  const handleHourChange = (value: string) => {
+    // Allow only numbers
+    const numValue = value.replace(/[^0-9]/g, '');
+
+    // Limit to 0-23
+    if (numValue === '' || (parseInt(numValue) >= 0 && parseInt(numValue) <= 23)) {
+      setHourInput(numValue);
+      updateStartTimeInput(numValue, minuteInput);
+
+      // Auto-focus to minute input when 2 digits entered
+      if (numValue.length === 2) {
+        setTimeout(() => {
+          document.getElementById('minute-input')?.focus();
+        }, 0);
+      }
+    }
+  };
+
+  const handleMinuteChange = (value: string) => {
+    // Allow only numbers
+    const numValue = value.replace(/[^0-9]/g, '');
+
+    // Limit to 0-59
+    if (numValue === '' || (parseInt(numValue) >= 0 && parseInt(numValue) <= 59)) {
+      setMinuteInput(numValue);
+      updateStartTimeInput(hourInput, numValue);
+    }
+  };
+
+  const updateStartTimeInput = (hours: string, minutes: string) => {
+    if (hours !== '' && minutes !== '') {
+      const h = hours.padStart(2, '0');
+      const m = minutes.padStart(2, '0');
+      setStartTimeInput(`${h}:${m}`);
+    } else {
+      setStartTimeInput('');
+    }
+  };
+
   const confirmStartTime = () => {
-    if (!selectedClientId || !startTimeInput) return;
+    if (!selectedClientId || !startTimeInput || !hourInput || !minuteInput) return;
 
     // Parse the input time (HH:mm)
-    const [hours, minutes] = startTimeInput.split(':').map(Number);
+    const hours = parseInt(hourInput);
+    const minutes = parseInt(minuteInput);
 
     // Create a date object for today with the specified time
     const startDate = new Date();
@@ -141,6 +289,8 @@ export default function Home() {
     setShowTimeModal(false);
     setSelectedClientId(null);
     setStartTimeInput("");
+    setHourInput("");
+    setMinuteInput("");
   };
 
   const stopClientTimer = (clientId: string) => {
@@ -160,20 +310,72 @@ export default function Home() {
   const totalSheets = calculateSheets(totalPages);
   const totalFolders = clientsData.reduce((sum, client) => sum + client.completedFolders, 0);
 
+  // Get tier color based on sheetsPerHour
+  const getTierColor = (sheetsPerHour: number) => {
+    if (sheetsPerHour >= 400) {
+      return {
+        gradient: 'bg-gradient-to-br from-pink-500 via-purple-500 to-indigo-500',
+        text: 'text-white',
+        glow: 'shadow-2xl ring-4 ring-purple-300 animate-pulse',
+        label: '🌈'
+      };
+    } else if (sheetsPerHour >= 300) {
+      return {
+        gradient: 'bg-gradient-to-br from-emerald-500 to-teal-500',
+        text: 'text-white',
+        glow: 'shadow-xl ring-2 ring-emerald-300',
+        label: '👑'
+      };
+    } else if (sheetsPerHour >= 200) {
+      return {
+        gradient: 'bg-gradient-to-br from-yellow-300 to-yellow-500',
+        text: 'text-yellow-900',
+        glow: 'shadow-lg',
+        label: '⚡'
+      };
+    } else {
+      return {
+        gradient: 'bg-gradient-to-br from-red-400 to-red-600',
+        text: 'text-white',
+        glow: 'shadow-md',
+        label: '🔥'
+      };
+    }
+  };
+
   // Calculate stats for each client
   const getClientStats = (clientId: string, completedFilesCount: number) => {
     const timer = clientTimers[clientId];
     if (!timer) return null;
 
-    const elapsedMs = currentTime - timer.startTime;
+    // Calculate time difference but cap at midnight
+    const startDate = new Date(timer.startTime);
+    const now = new Date(currentTime);
+
+    // Check if we crossed midnight (different days)
+    const startDay = new Date(startDate).setHours(0, 0, 0, 0);
+    const nowDay = new Date(now).setHours(0, 0, 0, 0);
+
+    let endTime = now;
+    if (nowDay > startDay) {
+      // Crossed midnight - cap at end of start day (midnight)
+      const midnight = new Date(startDate);
+      midnight.setHours(23, 59, 59, 999);
+      endTime = midnight;
+    }
+
+    const elapsedMs = endTime.getTime() - timer.startTime;
     const elapsedHours = Math.floor(elapsedMs / (1000 * 60 * 60));
     const elapsedMinutes = Math.floor((elapsedMs % (1000 * 60 * 60)) / (1000 * 60));
 
-    const filesDone = completedFilesCount - timer.startFilesCount;
-    const totalHours = elapsedMs / (1000 * 60 * 60);
-    const filesPerHour = totalHours > 0 ? Math.round(filesDone / totalHours) : 0;
+    // Calculate sheets done using the same logic as the summary
+    const startSheets = calculateSheets(timer.startFilesCount);
+    const currentSheets = calculateSheets(completedFilesCount);
+    const sheetsDone = currentSheets - startSheets;
 
-    const startDate = new Date(timer.startTime);
+    const totalHours = elapsedMs / (1000 * 60 * 60);
+    const sheetsPerHour = totalHours > 0 ? Math.round(sheetsDone / totalHours) : 0;
+
     const startTimeStr = startDate.toLocaleTimeString('th-TH', {
       hour: '2-digit',
       minute: '2-digit'
@@ -182,9 +384,10 @@ export default function Home() {
     return {
       elapsedHours,
       elapsedMinutes,
-      filesDone,
-      filesPerHour,
+      sheetsDone,
+      sheetsPerHour,
       startTimeStr,
+      tier: getTierColor(sheetsPerHour)
     };
   };
 
@@ -330,35 +533,28 @@ export default function Home() {
 
                   {/* Timer Info */}
                   {hasTimer && stats && (
-                    <div className="bg-gradient-to-br from-indigo-50 to-purple-50 border border-indigo-200 rounded-lg p-3 mb-3">
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-2">
-                          <svg className="w-4 h-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                          </svg>
-                          <span className="text-xs font-medium text-indigo-700">เริ่มเมื่อ {stats.startTimeStr}</span>
-                        </div>
+                    <div className={`${stats.tier.gradient} ${stats.tier.glow} rounded-lg p-2 mb-3 transition-all duration-500`}>
+                      {/* Tier Emoji */}
+                      <div className="text-center">
+                        <span className="text-lg">
+                          {stats.tier.label}
+                        </span>
                       </div>
-                      <div className={`grid ${stats.filesDone > 0 ? 'grid-cols-3' : 'grid-cols-1'} gap-2 text-center`}>
-                        {/* Always show elapsed time */}
-                        <div>
-                          <p className="text-indigo-900 text-lg font-bold">{stats.elapsedHours}:{stats.elapsedMinutes.toString().padStart(2, '0')}</p>
-                          <p className="text-indigo-600 text-[10px]">ชม.</p>
-                        </div>
 
-                        {/* Only show files done and rate if files > 0 */}
-                        {stats.filesDone > 0 && (
-                          <>
-                            <div>
-                              <p className="text-indigo-900 text-lg font-bold">{stats.filesDone}</p>
-                              <p className="text-indigo-600 text-[10px]">ไฟล์</p>
-                            </div>
-                            <div>
-                              <p className="text-indigo-900 text-lg font-bold">{stats.filesPerHour}</p>
-                              <p className="text-indigo-600 text-[10px]">ไฟล์/ชม.</p>
-                            </div>
-                          </>
-                        )}
+                      {/* Prominent Rate Display */}
+                      <div className="text-center mb-1">
+                        <p className={`${stats.tier.text} text-3xl font-bold`}>{stats.sheetsPerHour}</p>
+                        <p className={`${stats.tier.text} opacity-90 text-xs font-semibold`}>แผ่น/ชม.</p>
+                      </div>
+
+                      {/* Time Info */}
+                      <div className={`flex items-center justify-center gap-1 pt-1 border-t ${stats.tier.text === 'text-white' ? 'border-white/20' : 'border-black/20'}`}>
+                        <svg className={`w-3 h-3 ${stats.tier.text} opacity-80`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        <span className={`${stats.tier.text} opacity-80 text-[10px]`}>
+                          {stats.startTimeStr} • {stats.elapsedHours}:{stats.elapsedMinutes.toString().padStart(2, '0')} ชม.
+                        </span>
                       </div>
                     </div>
                   )}
@@ -402,7 +598,7 @@ export default function Home() {
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                         </svg>
-                        เริ่มงาน
+                        ตั้งค่าเวลา
                       </button>
                     ) : (
                       <button
@@ -450,51 +646,182 @@ export default function Home() {
             <h3 className="text-xl font-bold text-gray-800 mb-2">
               ตั้งเวลาเริ่มงาน
             </h3>
-            <p className="text-sm text-gray-600 mb-6">
+            <p className="text-sm text-gray-600 mb-4">
               Client {selectedClientId}
             </p>
 
-            <div className="mb-6">
-              <label className="block text-sm font-semibold text-gray-700 mb-2">
-                เวลาเริ่มงาน
+            <div className="mb-4">
+              <label className="block text-sm font-semibold text-gray-700 mb-3 text-center">
+                เวลาเริ่มงาน (24 ชั่วโมง)
               </label>
-              <input
-                type="time"
-                value={startTimeInput}
-                onChange={(e) => setStartTimeInput(e.target.value)}
-                className="w-full px-4 py-3 text-2xl text-center border-2 border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-gray-900"
-                autoFocus
-              />
-              <p className="text-xs text-gray-500 mt-2 text-center">
-                ระบุเวลาที่เริ่มทำงาน (เช่น 11:00)
-              </p>
+
+              {/* Quick Select */}
+              <div className="mb-3">
+                <button
+                  onClick={() => {
+                    const now = new Date();
+                    const h = now.getHours().toString().padStart(2, '0');
+                    const m = now.getMinutes().toString().padStart(2, '0');
+                    setHourInput(h);
+                    setMinuteInput(m);
+                    updateStartTimeInput(h, m);
+                  }}
+                  className="w-full px-4 py-2 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 active:from-emerald-700 active:to-teal-700 text-white rounded-lg font-semibold transition-colors shadow-sm flex items-center justify-center gap-2"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  ตอนนี้
+                </button>
+              </div>
+
+              <div className="grid grid-cols-4 gap-2 mb-4">
+                {[9, 10, 11, 12, 13, 14, 15, 16].map((hour) => (
+                  <button
+                    key={hour}
+                    onClick={() => {
+                      const h = hour.toString().padStart(2, '0');
+                      setHourInput(h);
+                      setMinuteInput('00');
+                      updateStartTimeInput(h, '00');
+                    }}
+                    className="px-3 py-2 bg-emerald-50 hover:bg-emerald-100 active:bg-emerald-200 text-emerald-700 rounded-lg text-sm font-semibold transition-colors border border-emerald-200"
+                  >
+                    {hour.toString().padStart(2, '0')}:00
+                  </button>
+                ))}
+              </div>
+
+              {/* Divider */}
+              <div className="relative mb-4">
+                <div className="absolute inset-0 flex items-center">
+                  <div className="w-full border-t border-gray-200"></div>
+                </div>
+                <div className="relative flex justify-center">
+                  <span className="bg-white px-3 text-xs text-gray-500">หรือระบุเอง</span>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-center gap-3">
+                {/* Hour Input */}
+                <div className="flex-1 max-w-[120px]">
+                  <input
+                    id="hour-input"
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    value={hourInput}
+                    onChange={(e) => handleHourChange(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || (hourInput.length === 2 && e.key >= '0' && e.key <= '9')) {
+                        e.preventDefault();
+                        document.getElementById('minute-input')?.focus();
+                      }
+                    }}
+                    onBlur={() => {
+                      if (hourInput && hourInput.length === 1) {
+                        setHourInput(hourInput.padStart(2, '0'));
+                        updateStartTimeInput(hourInput.padStart(2, '0'), minuteInput);
+                      }
+                    }}
+                    placeholder="00"
+                    maxLength={2}
+                    className="w-full px-4 py-4 text-4xl text-center border-2 border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-gray-900 bg-gray-50 font-bold"
+                    autoFocus
+                  />
+                  <p className="text-xs text-gray-500 text-center mt-1">ชั่วโมง (0-23)</p>
+                </div>
+
+                {/* Separator */}
+                <div className="text-4xl font-bold text-gray-400 pb-5">:</div>
+
+                {/* Minute Input */}
+                <div className="flex-1 max-w-[120px]">
+                  <input
+                    id="minute-input"
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    value={minuteInput}
+                    onChange={(e) => handleMinuteChange(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        if (hourInput && minuteInput && !(() => {
+                          const hours = parseInt(hourInput);
+                          const minutes = parseInt(minuteInput);
+                          if (isNaN(hours) || isNaN(minutes)) return true;
+                          const startDate = new Date();
+                          startDate.setHours(hours, minutes, 0, 0);
+                          return Date.now() < startDate.getTime();
+                        })()) {
+                          confirmStartTime();
+                        }
+                      }
+                    }}
+                    onBlur={() => {
+                      if (minuteInput && minuteInput.length === 1) {
+                        setMinuteInput(minuteInput.padStart(2, '0'));
+                        updateStartTimeInput(hourInput, minuteInput.padStart(2, '0'));
+                      }
+                    }}
+                    placeholder="00"
+                    maxLength={2}
+                    className="w-full px-4 py-4 text-4xl text-center border-2 border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-gray-900 bg-gray-50 font-bold"
+                  />
+                  <p className="text-xs text-gray-500 text-center mt-1">นาที (0-59)</p>
+                </div>
+              </div>
             </div>
 
             {/* Preview */}
-            {startTimeInput && (
-              <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4 mb-6">
-                <p className="text-sm text-indigo-700 text-center">
-                  เริ่มงานเวลา <span className="font-bold text-lg">{startTimeInput}</span>
-                </p>
+            {hourInput && minuteInput && (
+              <div className="mb-6">
                 {(() => {
-                  const [hours, minutes] = startTimeInput.split(':').map(Number);
+                  const hours = parseInt(hourInput);
+                  const minutes = parseInt(minuteInput);
+                  if (isNaN(hours) || isNaN(minutes)) return null;
+
                   const startDate = new Date();
                   startDate.setHours(hours, minutes, 0, 0);
                   const elapsedMs = Date.now() - startDate.getTime();
                   const elapsedHours = Math.floor(elapsedMs / (1000 * 60 * 60));
                   const elapsedMinutes = Math.floor((elapsedMs % (1000 * 60 * 60)) / (1000 * 60));
 
+                  const displayTime = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
+
                   if (elapsedMs > 0) {
                     return (
-                      <p className="text-xs text-indigo-600 text-center mt-1">
-                        ทำงานมาแล้ว {elapsedHours} ชั่วโมง {elapsedMinutes} นาที
-                      </p>
+                      <div className="bg-gradient-to-br from-emerald-50 to-teal-50 border border-emerald-200 rounded-xl p-4">
+                        <div className="text-center">
+                          <p className="text-emerald-600 text-sm mb-2">เริ่มงานเวลา</p>
+                          <p className="text-emerald-700 font-bold text-3xl mb-3">
+                            {displayTime}
+                          </p>
+                          <div className="bg-white/70 rounded-lg p-3 border border-emerald-100">
+                            <p className="text-emerald-600 text-xs mb-1">ทำงานมาแล้ว</p>
+                            <p className="text-emerald-700 font-bold text-lg">
+                              {elapsedHours}:{elapsedMinutes.toString().padStart(2, '0')} ชม.
+                            </p>
+                          </div>
+                        </div>
+                      </div>
                     );
                   } else {
                     return (
-                      <p className="text-xs text-red-600 text-center mt-1">
-                        เวลาที่เลือกอยู่ในอนาคต กรุณาเลือกเวลาในอดีต
-                      </p>
+                      <div className="bg-gradient-to-br from-red-50 to-orange-50 border-2 border-red-300 rounded-xl p-4">
+                        <div className="flex items-center justify-center gap-2 mb-2">
+                          <svg className="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                          </svg>
+                          <p className="text-red-700 font-bold text-sm">
+                            เวลาที่เลือกอยู่ในอนาคต
+                          </p>
+                        </div>
+                        <p className="text-red-600 text-xs text-center">
+                          กรุณาเลือกเวลาในอดีตหรือปัจจุบัน
+                        </p>
+                      </div>
                     );
                   }
                 })()}
@@ -507,20 +834,24 @@ export default function Home() {
                   setShowTimeModal(false);
                   setSelectedClientId(null);
                   setStartTimeInput("");
+                  setHourInput("");
+                  setMinuteInput("");
                 }}
-                className="flex-1 bg-gray-300 text-gray-700 py-3 rounded-lg font-semibold hover:bg-gray-400 transition-colors"
+                className="flex-1 bg-gray-200 text-gray-700 py-3 rounded-xl font-semibold hover:bg-gray-300 active:bg-gray-400 transition-colors"
               >
                 ยกเลิก
               </button>
               <button
                 onClick={confirmStartTime}
-                disabled={!startTimeInput || (() => {
-                  const [hours, minutes] = startTimeInput.split(':').map(Number);
+                disabled={!hourInput || !minuteInput || (() => {
+                  const hours = parseInt(hourInput);
+                  const minutes = parseInt(minuteInput);
+                  if (isNaN(hours) || isNaN(minutes)) return true;
                   const startDate = new Date();
                   startDate.setHours(hours, minutes, 0, 0);
                   return Date.now() < startDate.getTime();
                 })()}
-                className="flex-1 bg-gradient-to-r from-indigo-600 to-purple-600 text-white py-3 rounded-lg font-semibold hover:from-indigo-700 hover:to-purple-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                className="flex-1 bg-gradient-to-r from-emerald-600 to-teal-600 text-white py-3 rounded-xl font-semibold hover:from-emerald-700 hover:to-teal-700 active:from-emerald-800 active:to-teal-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-md"
               >
                 ยืนยัน
               </button>
