@@ -405,13 +405,11 @@ export default function Home() {
     const elapsedHours = Math.floor(elapsedMs / (1000 * 60 * 60));
     const elapsedMinutes = Math.floor((elapsedMs % (1000 * 60 * 60)) / (1000 * 60));
 
-    // Calculate sheets done using the same logic as the summary
-    const startSheets = calculateSheets(timer.startFilesCount);
+    // Calculate sheets using total (not delta) - same as client page
     const currentSheets = calculateSheets(completedFilesCount);
-    const sheetsDone = currentSheets - startSheets;
 
     const totalHours = elapsedMs / (1000 * 60 * 60);
-    const sheetsPerHour = totalHours > 0 ? Math.round(sheetsDone / totalHours) : 0;
+    const sheetsPerHour = totalHours > 0 ? Math.round((currentSheets / totalHours) * 10) / 10 : 0;
 
     const startTimeStr = startDate.toLocaleTimeString('th-TH', {
       hour: '2-digit',
@@ -421,7 +419,7 @@ export default function Home() {
     return {
       elapsedHours,
       elapsedMinutes,
-      sheetsDone,
+      sheetsDone: currentSheets, // Show total sheets instead of delta
       sheetsPerHour,
       startTimeStr,
       tier: getTierColor(sheetsPerHour)
