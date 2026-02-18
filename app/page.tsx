@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import defaultConfig from "../config.default.json";
 
 // Calculate sheets from pages using 30% rule
 // 30% first pages: 2 pages = 1 sheet (double-sided), odd page = 1 sheet
@@ -45,6 +46,30 @@ export default function Home() {
   const [syncResult, setSyncResult] = useState<any>(null);
   const [workerNames, setWorkerNames] = useState<Record<string, string[]>>({});
   const [workerCounts, setWorkerCounts] = useState<Record<string, number>>({});
+  const [displayClients, setDisplayClients] = useState<string[]>(["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"]);
+
+  // Load config on mount
+  useEffect(() => {
+    const loadConfig = async () => {
+      try {
+        const response = await fetch('/config.local.json');
+        if (response.ok) {
+          const localConfig = await response.json();
+          if (localConfig.displayClients && Array.isArray(localConfig.displayClients)) {
+            setDisplayClients(localConfig.displayClients);
+            console.log('Loaded local config:', localConfig.displayClients);
+          }
+        } else {
+          // If config.local.json doesn't exist, display all clients (1-10)
+          console.log('No local config found, displaying all clients (1-10)');
+        }
+      } catch (error) {
+        // Use default: display all clients (1-10)
+        console.log('Error loading config, displaying all clients (1-10)');
+      }
+    };
+    loadConfig();
+  }, []);
 
   // Fetch all clients data
   const fetchClientsData = async () => {
@@ -627,7 +652,9 @@ export default function Home() {
         {/* Client Cards Grid */}
         {!loading && (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-            {clientsData.map((client) => {
+            {clientsData
+              .filter((client) => displayClients.includes(client.clientId))
+              .map((client) => {
               const hasData = client.pendingCount > 0 || client.completedFolders > 0;
               const hasTimer = !!clientTimers[client.clientId];
               const stats = hasTimer ? getClientStats(client.clientId, client.completedFilesCount) : null;

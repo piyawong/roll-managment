@@ -44,3 +44,7 @@ tmp/
 # uploads
 /public/uploads/
 /uploads/
+
+# local config
+config.local.json
+public/config.local.json
