@@ -170,7 +170,8 @@ export default function ClientPage() {
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const [clientTimer, setClientTimer] = useState<ClientTimer | null>(null);
   const [currentTime, setCurrentTime] = useState(Date.now());
-  const [workerName, setWorkerName] = useState<string>("");
+  const [workerNames, setWorkerNames] = useState<string[]>([]);
+  const [workerCount, setWorkerCount] = useState<number>(1);
 
   // Fetch worker info from API on mount (once)
   useEffect(() => {
@@ -185,8 +186,10 @@ export default function ClientPage() {
         const machine = machines.find((m: any) => m.machineNumber === id);
 
         if (machine && machine.workers && machine.workers.length > 0) {
-          const worker = machine.workers[0]; // Get first worker
-          setWorkerName(worker.nickname || "");
+          // Get all worker names
+          const names = machine.workers.map((w: any) => w.nickname || "").filter((n: string) => n);
+          setWorkerNames(names);
+          setWorkerCount(machine.workers.length);
 
           // Check if we need to sync start time
           const savedTimers = localStorage.getItem('clientTimers');
@@ -202,19 +205,27 @@ export default function ClientPage() {
           }
 
           // Only set timer if it doesn't exist yet
-          if (!existingTimer && worker.clockInTime) {
-            const clockInDate = new Date(worker.clockInTime);
-            const newTimer: ClientTimer = {
-              startTime: clockInDate.getTime(),
-              startFilesCount: 0
-            };
+          // Use the earliest clockInTime from all workers
+          if (!existingTimer) {
+            const clockInTimes = machine.workers
+              .map((w: any) => w.clockInTime)
+              .filter((t: any) => t)
+              .map((t: string) => new Date(t).getTime());
 
-            // Save to localStorage
-            const timers = savedTimers ? JSON.parse(savedTimers) : {};
-            timers[id] = newTimer;
-            localStorage.setItem('clientTimers', JSON.stringify(timers));
+            if (clockInTimes.length > 0) {
+              const earliestTime = Math.min(...clockInTimes);
+              const newTimer: ClientTimer = {
+                startTime: earliestTime,
+                startFilesCount: 0
+              };
 
-            setClientTimer(newTimer);
+              // Save to localStorage
+              const timers = savedTimers ? JSON.parse(savedTimers) : {};
+              timers[id] = newTimer;
+              localStorage.setItem('clientTimers', JSON.stringify(timers));
+
+              setClientTimer(newTimer);
+            }
           }
         }
       } catch (error) {
@@ -992,21 +1003,24 @@ export default function ClientPage() {
 
   // Get tier color based on sheetsPerHour
   const getTierColor = (sheetsPerHour: number) => {
-    if (sheetsPerHour >= 400) {
+    // Multiply thresholds by worker count
+    const multiplier = workerCount;
+
+    if (sheetsPerHour >= 400 * multiplier) {
       return {
         gradient: 'from-pink-500 via-purple-500 to-indigo-500',
         text: 'text-white',
         glow: 'shadow-2xl ring-4 ring-purple-300',
         label: '🌈'
       };
-    } else if (sheetsPerHour >= 300) {
+    } else if (sheetsPerHour >= 300 * multiplier) {
       return {
         gradient: 'from-emerald-500 to-teal-500',
         text: 'text-white',
         glow: 'shadow-xl ring-2 ring-emerald-300',
         label: '👑'
       };
-    } else if (sheetsPerHour >= 200) {
+    } else if (sheetsPerHour >= 200 * multiplier) {
       return {
         gradient: 'from-yellow-300 to-yellow-500',
         text: 'text-yellow-900',
@@ -1079,7 +1093,7 @@ export default function ClientPage() {
           <div>
             <h1 className="text-xl font-bold text-gray-800">
               Client ${id}
-              {workerName && <span className="ml-2 text-blue-600">({workerName})</span>}
+              {workerNames.length > 0 && <span className="ml-2 text-blue-600">({workerNames.join(', ')})</span>}
             </h1>
             <p className="text-sm text-gray-500">จัดการ Roll</p>
           </div>

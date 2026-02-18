@@ -43,6 +43,8 @@ export default function Home() {
   const [syncingThumbnails, setSyncingThumbnails] = useState(false);
   const [showSyncModal, setShowSyncModal] = useState(false);
   const [syncResult, setSyncResult] = useState<any>(null);
+  const [workerNames, setWorkerNames] = useState<Record<string, string[]>>({});
+  const [workerCounts, setWorkerCounts] = useState<Record<string, number>>({});
 
   // Fetch all clients data
   const fetchClientsData = async () => {
@@ -78,14 +80,71 @@ export default function Home() {
     }
   };
 
+  // Fetch worker info from API on mount (once)
   useEffect(() => {
-    fetchClientsData();
+    const fetchWorkersInfo = async () => {
+      try {
+        const response = await fetch('http://46.250.238.125:3006/employee-management/api/machines/active');
+        const machines = await response.json();
 
-    // Load client timers from localStorage
-    const savedTimers = localStorage.getItem('clientTimers');
-    if (savedTimers) {
-      setClientTimers(JSON.parse(savedTimers));
-    }
+        const names: Record<string, string[]> = {};
+        const counts: Record<string, number> = {};
+        const savedTimers = localStorage.getItem('clientTimers');
+        const existingTimers = savedTimers ? JSON.parse(savedTimers) : {};
+        const newTimers: Record<string, ClientTimer> = { ...existingTimers };
+
+        // Process each machine
+        machines.forEach((machine: any) => {
+          const clientId = machine.machineNumber;
+
+          if (machine.workers && machine.workers.length > 0) {
+            // Get all worker names
+            const workerNamesList = machine.workers.map((w: any) => w.nickname || "").filter((n: string) => n);
+            names[clientId] = workerNamesList;
+            counts[clientId] = machine.workers.length;
+
+            // Only set timer if it doesn't exist yet
+            // Use the earliest clockInTime from all workers
+            if (!existingTimers[clientId]) {
+              const clockInTimes = machine.workers
+                .map((w: any) => w.clockInTime)
+                .filter((t: any) => t)
+                .map((t: string) => new Date(t).getTime());
+
+              if (clockInTimes.length > 0) {
+                const earliestTime = Math.min(...clockInTimes);
+                newTimers[clientId] = {
+                  startTime: earliestTime,
+                  startFilesCount: 0
+                };
+              }
+            }
+          }
+        });
+
+        setWorkerNames(names);
+        setWorkerCounts(counts);
+
+        // Update timers if there are new ones
+        if (Object.keys(newTimers).length > Object.keys(existingTimers).length) {
+          localStorage.setItem('clientTimers', JSON.stringify(newTimers));
+          setClientTimers(newTimers);
+        } else if (savedTimers) {
+          setClientTimers(existingTimers);
+        }
+      } catch (error) {
+        console.error('Failed to fetch workers info:', error);
+
+        // Still load existing timers even if API fails
+        const savedTimers = localStorage.getItem('clientTimers');
+        if (savedTimers) {
+          setClientTimers(JSON.parse(savedTimers));
+        }
+      }
+    };
+
+    fetchClientsData();
+    fetchWorkersInfo();
   }, []);
 
   // Update current time every second for live clock
@@ -348,22 +407,25 @@ export default function Home() {
   const totalFolders = clientsData.reduce((sum, client) => sum + client.completedFolders, 0);
 
   // Get tier color based on sheetsPerHour
-  const getTierColor = (sheetsPerHour: number) => {
-    if (sheetsPerHour >= 400) {
+  const getTierColor = (sheetsPerHour: number, clientId: string) => {
+    // Multiply thresholds by worker count for this client
+    const multiplier = workerCounts[clientId] || 1;
+
+    if (sheetsPerHour >= 400 * multiplier) {
       return {
         gradient: 'bg-gradient-to-br from-pink-500 via-purple-500 to-indigo-500',
         text: 'text-white',
         glow: 'shadow-2xl ring-4 ring-purple-300 animate-pulse',
         label: '🌈'
       };
-    } else if (sheetsPerHour >= 300) {
+    } else if (sheetsPerHour >= 300 * multiplier) {
       return {
         gradient: 'bg-gradient-to-br from-emerald-500 to-teal-500',
         text: 'text-white',
         glow: 'shadow-xl ring-2 ring-emerald-300',
         label: '👑'
       };
-    } else if (sheetsPerHour >= 200) {
+    } else if (sheetsPerHour >= 200 * multiplier) {
       return {
         gradient: 'bg-gradient-to-br from-yellow-300 to-yellow-500',
         text: 'text-yellow-900',
@@ -422,7 +484,7 @@ export default function Home() {
       sheetsDone: currentSheets, // Show total sheets instead of delta
       sheetsPerHour,
       startTimeStr,
-      tier: getTierColor(sheetsPerHour)
+      tier: getTierColor(sheetsPerHour, clientId)
     };
   };
 
@@ -581,11 +643,18 @@ export default function Home() {
                 >
                   {/* Header */}
                   <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-lg font-bold text-gray-800">
-                      Client {client.clientId}
-                    </h3>
+                    <div className="flex-1">
+                      <h3 className="text-lg font-bold text-gray-800">
+                        Client {client.clientId}
+                      </h3>
+                      {workerNames[client.clientId] && workerNames[client.clientId].length > 0 && (
+                        <p className="text-sm text-blue-600 font-medium">
+                          {workerNames[client.clientId].join(', ')}
+                        </p>
+                      )}
+                    </div>
                     <div
-                      className={`w-3 h-3 rounded-full ${
+                      className={`w-3 h-3 rounded-full shrink-0 ${
                         hasTimer ? "bg-indigo-500 animate-pulse" : hasData ? "bg-green-500" : "bg-gray-300"
                       }`}
                       title={hasTimer ? "กำลังทำงาน" : hasData ? "มีข้อมูล" : "ไม่มีข้อมูล"}
