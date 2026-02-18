@@ -170,6 +170,60 @@ export default function ClientPage() {
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const [clientTimer, setClientTimer] = useState<ClientTimer | null>(null);
   const [currentTime, setCurrentTime] = useState(Date.now());
+  const [workerName, setWorkerName] = useState<string>("");
+
+  // Fetch worker info from API on mount (once)
+  useEffect(() => {
+    if (!id) return;
+
+    const fetchWorkerInfo = async () => {
+      try {
+        const response = await fetch('http://46.250.238.125:3006/employee-management/api/machines/active');
+        const machines = await response.json();
+
+        // Find machine by number matching client ID
+        const machine = machines.find((m: any) => m.machineNumber === id);
+
+        if (machine && machine.workers && machine.workers.length > 0) {
+          const worker = machine.workers[0]; // Get first worker
+          setWorkerName(worker.nickname || "");
+
+          // Check if we need to sync start time
+          const savedTimers = localStorage.getItem('clientTimers');
+          let existingTimer = null;
+
+          if (savedTimers) {
+            try {
+              const timers = JSON.parse(savedTimers);
+              existingTimer = timers[id];
+            } catch (error) {
+              console.error('Failed to parse client timers:', error);
+            }
+          }
+
+          // Only set timer if it doesn't exist yet
+          if (!existingTimer && worker.clockInTime) {
+            const clockInDate = new Date(worker.clockInTime);
+            const newTimer: ClientTimer = {
+              startTime: clockInDate.getTime(),
+              startFilesCount: 0
+            };
+
+            // Save to localStorage
+            const timers = savedTimers ? JSON.parse(savedTimers) : {};
+            timers[id] = newTimer;
+            localStorage.setItem('clientTimers', JSON.stringify(timers));
+
+            setClientTimer(newTimer);
+          }
+        }
+      } catch (error) {
+        console.error('Failed to fetch worker info:', error);
+      }
+    };
+
+    fetchWorkerInfo();
+  }, [id]);
 
   // Load client timer from localStorage
   useEffect(() => {
@@ -1023,7 +1077,10 @@ export default function ClientPage() {
       <header className="bg-white shadow-sm sticky top-0 z-10">
         <div className="px-4 py-4 flex justify-between items-center">
           <div>
-            <h1 className="text-xl font-bold text-gray-800">Client ${id}</h1>
+            <h1 className="text-xl font-bold text-gray-800">
+              Client ${id}
+              {workerName && <span className="ml-2 text-blue-600">({workerName})</span>}
+            </h1>
             <p className="text-sm text-gray-500">จัดการ Roll</p>
           </div>
           <div className="flex items-center gap-3">
