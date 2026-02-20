@@ -71,9 +71,20 @@ export async function GET(
             const stat = await fs.stat(folderPath);
             if (stat.isDirectory()) {
               const files = await fs.readdir(folderPath);
+              // Count only files, not directories
+              const fileStats = await Promise.all(
+                files
+                  .filter((f) => !f.startsWith("."))
+                  .map(async (f) => {
+                    const fPath = path.join(folderPath, f);
+                    const fStat = await fs.stat(fPath);
+                    return fStat.isFile();
+                  })
+              );
+              const fileCount = fileStats.filter(Boolean).length;
               return {
                 name: folder,
-                fileCount: files.filter((f) => !f.startsWith(".")).length,
+                fileCount,
               };
             }
             return null;
@@ -213,7 +224,22 @@ export async function POST(
   const clientDir = path.join(UPLOADS_DIR, id);
   const pendingDir = path.join(clientDir, "pending");
   const completedDir = path.join(clientDir, "completed");
-  const targetDir = path.join(completedDir, folderName);
+
+  // Sanitize folderName - remove any path separators
+  const sanitizedFolderName = folderName.replace(/[\/\\]/g, '-');
+  if (sanitizedFolderName !== folderName) {
+    console.warn(`[POST /api/client/${id}] Folder name sanitized:`, {
+      original: folderName,
+      sanitized: sanitizedFolderName
+    });
+  }
+
+  const targetDir = path.join(completedDir, sanitizedFolderName);
+
+  console.log(`[POST /api/client/${id}] === Starting File Processing ===`);
+  console.log(`[POST /api/client/${id}] Folder name:`, sanitizedFolderName);
+  console.log(`[POST /api/client/${id}] Target directory:`, targetDir);
+  console.log(`[POST /api/client/${id}] Pending directory:`, pendingDir);
 
   try {
     // สร้าง directories ถ้ายังไม่มี
@@ -251,18 +277,39 @@ export async function POST(
     await fs.mkdir(targetDir, { recursive: true });
 
     // ย้ายและ rename ไฟล์ + สร้าง thumbnail ใน completed
+    console.log(`[POST /api/client/${id}] Moving ${fileStats.length} files to completed folder...`);
+
     for (let i = 0; i < fileStats.length; i++) {
       const file = fileStats[i];
       const newName = `${i + 1}${file.ext}`;
       const sourcePath = path.join(pendingDir, file.name);
       const targetPath = path.join(targetDir, newName);
 
+      console.log(`[POST /api/client/${id}] Moving file ${i + 1}/${fileStats.length}:`, {
+        source: file.name,
+        target: newName,
+        targetPath
+      });
+
+      // Verify targetPath is within targetDir (security check)
+      const resolvedTarget = path.resolve(targetPath);
+      const resolvedTargetDir = path.resolve(targetDir);
+      if (!resolvedTarget.startsWith(resolvedTargetDir)) {
+        console.error(`[POST /api/client/${id}] Security error - path traversal attempt:`, {
+          targetPath,
+          targetDir,
+          resolvedTarget,
+          resolvedTargetDir
+        });
+        throw new Error(`Invalid target path: ${newName}`);
+      }
+
       await fs.rename(sourcePath, targetPath);
 
       // สร้าง thumbnail ใน completed folder
-      const newThumbnailPath = path.join(THUMBNAILS_DIR, id, "completed", folderName, `thumb_${newName}`);
+      const newThumbnailPath = path.join(THUMBNAILS_DIR, id, "completed", sanitizedFolderName, `thumb_${newName}`);
       await createThumbnail(targetPath, newThumbnailPath);
-      console.log(`[POST /api/client/${id}] สร้าง thumbnail: thumb_${newName} ใน completed/${folderName}`);
+      console.log(`[POST /api/client/${id}] สร้าง thumbnail: thumb_${newName} ใน completed/${sanitizedFolderName}`);
 
       // ลบ thumbnail ของไฟล์เดิมใน pending (ถ้ามี)
       const oldThumbnailPath = path.join(THUMBNAILS_DIR, id, "pending", `thumb_${file.name}`);
@@ -282,10 +329,10 @@ export async function POST(
       // file.txt อาจไม่มี
     }
 
-    console.log(`[POST /api/client/${id}] Success! Folder: ${folderName}, Files: ${fileStats.length}`);
+    console.log(`[POST /api/client/${id}] Success! Folder: ${sanitizedFolderName}, Files: ${fileStats.length}`);
     return NextResponse.json({
       success: true,
-      folderName: folderName.trim(),
+      folderName: sanitizedFolderName.trim(),
       filesProcessed: fileStats.length,
     });
   } catch (error) {

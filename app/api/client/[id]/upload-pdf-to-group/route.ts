@@ -87,6 +87,12 @@ export async function POST(
       const file = formData.get("pdf") as File | null;
       const groupName = formData.get("groupName") as string | null;
 
+      console.log('[Upload PDF to Group] Starting...', {
+        fileName: file?.name,
+        groupName,
+        clientId: id
+      });
+
       if (!file) {
         send({ type: "error", error: "No PDF file provided" });
         close();
@@ -99,6 +105,14 @@ export async function POST(
         return;
       }
 
+      // Validate groupName - ensure no path traversal or nested paths
+      if (groupName.includes('/') || groupName.includes('\\')) {
+        console.error('[Upload PDF to Group] Invalid groupName - contains path separator:', groupName);
+        send({ type: "error", error: "Invalid group name - cannot contain path separators" });
+        close();
+        return;
+      }
+
       if (!file.name.toLowerCase().endsWith(".pdf")) {
         send({ type: "error", error: "File must be a PDF" });
         close();
@@ -106,6 +120,8 @@ export async function POST(
       }
 
       const groupDir = path.join(UPLOADS_DIR, id, "completed", groupName);
+
+      console.log('[Upload PDF to Group] Target directory:', groupDir);
 
       // Check if group exists
       try {
@@ -150,11 +166,16 @@ export async function POST(
 
       // Get existing files in group to determine next file number
       const existingFiles = await fs.readdir(groupDir);
-      const existingNumbers = existingFiles
-        .filter(f => f.match(/^\d+\.jpeg$/))
-        .map(f => parseInt(f.replace('.jpeg', '')))
-        .filter(n => !isNaN(n));
-      const startNumber = existingNumbers.length > 0 ? Math.max(...existingNumbers) + 1 : 1;
+      const existingNumbers = await Promise.all(
+        existingFiles
+          .filter(f => f.match(/^\d+\.jpeg$/))
+          .map(async (f) => {
+            const stat = await fs.stat(path.join(groupDir, f));
+            return stat.isFile() ? parseInt(f.replace('.jpeg', '')) : null;
+          })
+      );
+      const validNumbers = existingNumbers.filter((n): n is number => n !== null && !isNaN(n));
+      const startNumber = validNumbers.length > 0 ? Math.max(...validNumbers) + 1 : 1;
 
       if (usePdftoppm) {
         // Use pdftoppm method
