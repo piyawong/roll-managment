@@ -120,12 +120,25 @@ export default function ClientPage() {
   const [data, setData] = useState<ClientData | null>(null);
   const [connected, setConnected] = useState(false);
   const [isFinishing, setIsFinishing] = useState(false);
-  const [formData, setFormData] = useState({
-    districtOfficeName: "",
-    orderNumber: "",
-    name: "",
-    type: "มูลนิธิ",
-    registrationNumber: "",
+  const [formData, setFormData] = useState(() => {
+    // Load saved type preference from localStorage
+    if (typeof window !== 'undefined') {
+      const savedType = localStorage.getItem('organizationType');
+      return {
+        districtOfficeName: "",
+        orderNumber: "",
+        name: "",
+        type: savedType || "มูลนิธิ",
+        registrationNumber: "",
+      };
+    }
+    return {
+      districtOfficeName: "",
+      orderNumber: "",
+      name: "",
+      type: "มูลนิธิ",
+      registrationNumber: "",
+    };
   });
   const [processing, setProcessing] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -172,6 +185,8 @@ export default function ClientPage() {
   const [currentTime, setCurrentTime] = useState(Date.now());
   const [workerNames, setWorkerNames] = useState<string[]>([]);
   const [workerCount, setWorkerCount] = useState<number>(1);
+  const [showFolderNameModal, setShowFolderNameModal] = useState(false);
+  const [selectedFolderFullName, setSelectedFolderFullName] = useState<string>("");
 
   // Fetch worker info from API on mount (once)
   useEffect(() => {
@@ -1041,25 +1056,44 @@ export default function ClientPage() {
   const getClientStats = () => {
     if (!clientTimer || !data) return null;
 
-    // Calculate time difference but cap at midnight
     const startDate = new Date(clientTimer.startTime);
     const now = new Date(currentTime);
 
-    // Check if we crossed midnight (different days)
-    const startDay = new Date(startDate).setHours(0, 0, 0, 0);
-    const nowDay = new Date(now).setHours(0, 0, 0, 0);
+    // Check if start date is today or older
+    const startDay = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
     let endTime = now;
-    if (nowDay > startDay) {
-      // Crossed midnight - cap at end of start day (midnight)
+    let elapsedMs = 0;
+
+    if (today.getTime() > startDay.getTime()) {
+      // Start date is in the past (not today)
+      // Cap at midnight of start day
       const midnight = new Date(startDate);
       midnight.setHours(23, 59, 59, 999);
       endTime = midnight;
+      elapsedMs = endTime.getTime() - clientTimer.startTime;
+    } else {
+      // Start date is today - calculate normally
+      elapsedMs = now.getTime() - clientTimer.startTime;
     }
 
-    const elapsedMs = endTime.getTime() - clientTimer.startTime;
     const elapsedHours = Math.floor(elapsedMs / (1000 * 60 * 60));
     const elapsedMinutes = Math.floor((elapsedMs % (1000 * 60 * 60)) / (1000 * 60));
+
+    // Debug log
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[Time Calculation]', {
+        startTime: startDate.toLocaleString('th-TH'),
+        now: now.toLocaleString('th-TH'),
+        startDay: startDay.toLocaleDateString('th-TH'),
+        today: today.toLocaleDateString('th-TH'),
+        isSameDay: today.getTime() === startDay.getTime(),
+        elapsedHours,
+        elapsedMinutes,
+        elapsedMs
+      });
+    }
 
     // Calculate total completed files
     const completedFilesCount = data.completed.reduce((sum, folder) => sum + folder.fileCount, 0);
@@ -1621,7 +1655,12 @@ export default function ClientPage() {
                 </label>
                 <select
                   value={formData.type}
-                  onChange={(e) => setFormData({ ...formData, type: e.target.value })}
+                  onChange={(e) => {
+                    const newType = e.target.value;
+                    setFormData({ ...formData, type: newType });
+                    // Save type preference to localStorage
+                    localStorage.setItem('organizationType', newType);
+                  }}
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent text-gray-900"
                   disabled={processing}
                 >
@@ -1712,7 +1751,16 @@ export default function ClientPage() {
                       />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="font-semibold text-gray-800 truncate">{folder.name}</p>
+                      <p
+                        className="font-semibold text-gray-800 truncate cursor-pointer hover:text-blue-600 transition-colors"
+                        onClick={() => {
+                          setSelectedFolderFullName(folder.name);
+                          setShowFolderNameModal(true);
+                        }}
+                        title="คลิกเพื่อดูชื่อเต็ม"
+                      >
+                        {folder.name}
+                      </p>
                       <p className="text-xs text-gray-500">{folder.fileCount} ไฟล์</p>
                     </div>
                     <button
@@ -1959,6 +2007,49 @@ export default function ClientPage() {
                 </button>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Folder Name Modal */}
+      {showFolderNameModal && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-xl font-bold text-gray-800">ชื่อโฟลเดอร์เต็ม</h3>
+              <button
+                onClick={() => setShowFolderNameModal(false)}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 mb-4">
+              <p className="text-gray-800 break-all font-mono text-sm leading-relaxed">
+                {selectedFolderFullName}
+              </p>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(selectedFolderFullName);
+                  alert('คัดลอกชื่อโฟลเดอร์แล้ว!');
+                }}
+                className="flex-1 bg-blue-600 text-white py-3 rounded-xl font-semibold hover:bg-blue-700 active:bg-blue-800 transition-colors"
+              >
+                คัดลอก
+              </button>
+              <button
+                onClick={() => setShowFolderNameModal(false)}
+                className="flex-1 bg-gray-200 text-gray-700 py-3 rounded-xl font-semibold hover:bg-gray-300 active:bg-gray-400 transition-colors"
+              >
+                ปิด
+              </button>
+            </div>
           </div>
         </div>
       )}

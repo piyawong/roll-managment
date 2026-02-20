@@ -472,23 +472,28 @@ export default function Home() {
     const timer = clientTimers[clientId];
     if (!timer) return null;
 
-    // Calculate time difference but cap at midnight
     const startDate = new Date(timer.startTime);
     const now = new Date(currentTime);
 
-    // Check if we crossed midnight (different days)
-    const startDay = new Date(startDate).setHours(0, 0, 0, 0);
-    const nowDay = new Date(now).setHours(0, 0, 0, 0);
+    // Check if start date is today or older
+    const startDay = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
     let endTime = now;
-    if (nowDay > startDay) {
-      // Crossed midnight - cap at end of start day (midnight)
+    let elapsedMs = 0;
+
+    if (today.getTime() > startDay.getTime()) {
+      // Start date is in the past (not today)
+      // Cap at midnight of start day
       const midnight = new Date(startDate);
       midnight.setHours(23, 59, 59, 999);
       endTime = midnight;
+      elapsedMs = endTime.getTime() - timer.startTime;
+    } else {
+      // Start date is today - calculate normally
+      elapsedMs = now.getTime() - timer.startTime;
     }
 
-    const elapsedMs = endTime.getTime() - timer.startTime;
     const elapsedHours = Math.floor(elapsedMs / (1000 * 60 * 60));
     const elapsedMinutes = Math.floor((elapsedMs % (1000 * 60 * 60)) / (1000 * 60));
 

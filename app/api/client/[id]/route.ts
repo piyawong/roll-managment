@@ -120,14 +120,24 @@ export async function POST(
       );
     }
 
-    // สร้าง folder name ตาม format: {สำนักงานเขต}-{เลขลำดับ}-{ชื่อ}-{เลขกท}
+    // สร้าง folder name ตาม format:
+    // สมาคม: สมาคม-{สำนักงานเขต}-{เลขลำดับ}-{ชื่อ}-{เลขกท}
+    // มูลนิธิ: {สำนักงานเขต}-{เลขลำดับ}-{ชื่อ}-{เลขกท}
     const parts = [
       districtOfficeName.trim(),
       orderNumber.toString(),
       name.trim(),
       registrationNumber.trim(),
     ];
-    folderName = parts.join("-");
+
+    const baseFolderName = parts.join("-");
+
+    // Add prefix if type is สมาคม
+    if (type === "สมาคม") {
+      folderName = `สมาคม-${baseFolderName}`;
+    } else {
+      folderName = baseFolderName;
+    }
 
     // ยิง API ไปที่ portal server
     console.log(`[POST /api/client/${id}] === Registering Organization to Portal ===`);
