@@ -153,7 +153,7 @@ export async function POST(
     // ยิง API ไปที่ portal server
     console.log(`[POST /api/client/${id}] === Registering Organization to Portal ===`);
     console.log(`[POST /api/client/${id}] Timestamp:`, new Date().toISOString());
-    console.log(`[POST /api/client/${id}] Portal URL:`, "http://46.250.238.125:4004/organizations/register");
+    console.log(`[POST /api/client/${id}] Portal URL:`, "http://5.223.72.18:4004/organizations/register");
     console.log(`[POST /api/client/${id}] Request Data:`, {
       districtOfficeName: districtOfficeName.trim(),
       orderNumber: orderNumber || undefined,
@@ -164,7 +164,7 @@ export async function POST(
     });
 
     try {
-      const registerResponse = await fetch("http://46.250.238.125:4004/organizations/register", {
+      const registerResponse = await fetch("http://5.223.72.18:4004/organizations/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

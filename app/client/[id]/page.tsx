@@ -194,7 +194,7 @@ export default function ClientPage() {
 
     const fetchWorkerInfo = async () => {
       try {
-        const response = await fetch('http://46.250.238.125:3006/employee-management/api/machines/active');
+        const response = await fetch('http://5.223.72.18:3006/employee-management/api/machines/active');
         const machines = await response.json();
 
         // Find machine by number matching client ID
