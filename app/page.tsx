@@ -109,7 +109,7 @@ export default function Home() {
   useEffect(() => {
     const fetchWorkersInfo = async () => {
       try {
-        const response = await fetch('http://5.223.72.18:3006/employee-management/api/machines/active');
+        const response = await fetch('https://ocr-flow.piyawong.com/employee-management/api/machines/active');
         const machines = await response.json();
 
         const names: Record<string, string[]> = {};
